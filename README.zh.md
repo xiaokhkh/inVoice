@@ -62,16 +62,6 @@ pip install -r requirements.txt
 deactivate
 ```
 
-可选的 LLM stub，用于本地 API 演示：
-
-```bash
-cd ../llm_stub
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-deactivate
-```
-
 准备 Ollama：
 
 ```bash
@@ -89,7 +79,9 @@ ollama pull qwen2.5-coder:7b-instruct-q5_1
 
 1. 用 Xcode 打开 `apps/macos/VoiceOps.xcodeproj`。
 2. Build & Run `VoiceOps` scheme。
-3. 按提示授予麦克风、辅助功能和输入监控权限。
+3. 按 `Command + Option + P` 打开 Preferences，在 Permissions 页分别点击一次授权按钮。
+
+App 启动时只读取权限状态，不会自动循环请求。项目使用固定的本地签名 requirement `com.voiceops.VoiceOps`，因此同一路径下重新构建后，macOS 仍能识别为同一个 App。
 
 App 启动时也会尝试自动拉起 sidecar。它会优先查找各 sidecar 目录下的 `.venv/bin/python`，再回退到 `VOICEOPS_PYTHON_PATH` 或 `/usr/bin/python3`。
 
@@ -138,7 +130,6 @@ flowchart LR
 | 快速 ASR | `8790` | `POST /v1/fast_asr/push` | 推送 base64 float32 PCM 分片 |
 | 快速 ASR | `8790` | `POST /v1/fast_asr/end` | 结束流式识别会话 |
 | Ollama | `11434` | `POST /api/chat` | 离线翻译或润色 |
-| LLM stub | `8787` | FastAPI demo 服务 | 可选开发 stub |
 
 由 App 拉起 sidecar 时，日志会写入 `~/Library/Logs/VoiceOps/sidecar_*.log`。
 
@@ -162,7 +153,6 @@ apps/macos/VoiceOps/          SwiftUI/AppKit macOS App
 apps/macos/project.yml        XcodeGen 项目定义
 sidecars/asr_mlx/             基于 mlx-audio 的最终 ASR FastAPI wrapper
 sidecars/fast_asr/            基于 sherpa-onnx 的流式 ASR FastAPI 服务
-sidecars/llm_stub/            可选 FastAPI demo LLM 端点
 models/zipformer/             快速 ASR 默认模型目录
 docs/                         项目说明和 README 配图资产
 scripts/dev_run.sh            开发用 sidecar 启动脚本

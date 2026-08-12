@@ -25,7 +25,7 @@ final class PipelineController: ObservableObject {
     @Published var output: String = ""
 
     private let asr = ASRClient()
-    private let llm = LLMClient()
+    private let llm = OfflineLLMClient()
     private let injector = InputInjector()
     private let audio = AudioCaptureService()
     private let streamingStabilizer = TextStabilizer(confirmations: 2)
@@ -91,8 +91,6 @@ final class PipelineController: ObservableObject {
     func insertToFocusedApp() {
         guard case .ready = state else { return }
         let text = output.isEmpty ? transcript : output
-        Permissions.requestAccessibilityIfNeeded()
-
         Task {
             try? await Task.sleep(nanoseconds: 100_000_000)
             let didInject = injector.insertViaPaste(text)
@@ -186,7 +184,6 @@ final class PipelineController: ObservableObject {
             return
         }
 
-        Permissions.requestAccessibilityIfNeeded()
         transcript = ""
         output = ""
         activeSession = .streaming
@@ -316,7 +313,6 @@ final class PipelineController: ObservableObject {
             return
         }
 
-        Permissions.requestAccessibilityIfNeeded()
         transcript = ""
         output = ""
         activeSession = .polish

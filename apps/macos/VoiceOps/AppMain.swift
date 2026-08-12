@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var translateHotKeyPreference = TranslateHotKeyPreference.defaultValue
     private var hotKeyDefaultsObserver: Any?
     private var settingsWindowController: NSWindowController?
+    private var preferencesHotKey: HotKeyService?
     private let fnMonitor = FnKeyMonitor()
     private let fnSession = FnSessionController()
     private let clipboardObserver = ClipboardObserver.shared
@@ -44,15 +45,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupOverlay()
         setupPreviewPanel()
         setupShortcuts()
+        setupPreferencesHotKey()
         setupFnMonitor()
         bindPipeline()
-        Permissions.requestInputMonitoringIfNeeded()
         clipboardObserver.start()
         sidecarLauncher.startAll()
+
+        if ProcessInfo.processInfo.environment["VOICEOPS_OPEN_PREFERENCES"] == "1" {
+            DispatchQueue.main.async { [weak self] in
+                self?.openPreferences()
+            }
+        }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
         refreshPermissionState()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openPreferences()
+        return true
     }
 
     private func setupStatusItem() {
@@ -116,6 +128,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func setupPreferencesHotKey() {
+        do {
+            preferencesHotKey = try HotKeyService(
+                keyCode: UInt32(kVK_ANSI_P),
+                modifiers: UInt32(cmdKey | optionKey)
+            ) { [weak self] in
+                Task { @MainActor [weak self] in
+                    self?.openPreferences()
+                }
+            }
+        } catch {
+            print("[hotkey] preferences_register_failed error=\(error)")
+        }
+    }
+
     private func reloadClipboardHotKeyIfNeeded() {
         let latest = HotKeyPreference.load()
         guard latest != clipboardHotKeyPreference else { return }
@@ -156,18 +183,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fnSession.onPreviewText = { [weak self] text in
             self?.previewModel.text = text
         }
-        fnMonitor.start()
+        if Permissions.hasInputMonitoring() {
+            fnMonitor.start()
+        }
     }
 
     private func handleFnDown() {
         guard !fnHoldActive else { return }
+        guard Permissions.hasAccessibility() else {
+            openPreferences()
+            return
+        }
         fnHoldActive = true
         clipboardPanel.hide()
         panel?.hide()
         previewModel.text = ""
         previewModel.state = .recording
         previewPanel?.show()
-        Permissions.requestAccessibilityIfNeeded()
         Task { await fnSession.startSession() }
     }
 
@@ -180,7 +212,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleTranslateSelection() {
         clipboardPanel.hide()
         panel?.hide()
-        Permissions.requestAccessibilityIfNeeded()
+        guard Permissions.hasAccessibility() else {
+            openPreferences()
+            return
+        }
         Task { [weak self] in
             guard let self else { return }
             let selection = await selectionCapture.captureSelection()
@@ -261,6 +296,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refreshPermissionState() {
         if Permissions.hasInputMonitoring() {
             fnMonitor.ensureEventTap()
+        } else {
+            fnMonitor.stop()
         }
     }
 }
@@ -292,6 +329,20 @@ struct HotKeySettingsView: View {
                     title: "Shortcuts",
                     subtitle: "Control how you start recording, search clipboard, and translate selections."
                 )
+
+                SectionCard(title: "Preferences", subtitle: "Open settings even when the menu bar item is hidden.") {
+                    HStack {
+                        Text("Open Preferences")
+                            .font(.headline)
+                        Spacer()
+                        Text("Command+Option+P")
+                            .font(.system(.body, design: .monospaced))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Color.secondary.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                    }
+                }
 
                 SectionCard(title: "Activation", subtitle: "Press and hold to start recording.") {
                     ShortcutRecorderRow(
@@ -341,17 +392,29 @@ struct HotKeySettingsView: View {
 }
 
 struct PreferencesView: View {
+    @State private var selectedTab: Int
+
+    init() {
+        let needsPermission = !Permissions.hasAccessibility()
+            || !Permissions.hasInputMonitoring()
+            || !Permissions.hasMicrophoneAccess()
+        _selectedTab = State(initialValue: needsPermission ? 1 : 2)
+    }
+
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             HotKeySettingsView()
+                .tag(0)
                 .tabItem {
                     Text("Shortcuts")
                 }
             PermissionsPanelView()
+                .tag(1)
                 .tabItem {
                     Text("Permissions")
                 }
             PromptSettingsView()
+                .tag(2)
                 .tabItem {
                     Text("LLM")
                 }

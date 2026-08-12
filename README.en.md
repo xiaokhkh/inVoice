@@ -62,16 +62,6 @@ pip install -r requirements.txt
 deactivate
 ```
 
-Optional LLM stub for local API demos:
-
-```bash
-cd ../llm_stub
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-deactivate
-```
-
 Prepare Ollama:
 
 ```bash
@@ -89,7 +79,9 @@ Build the macOS app:
 
 1. Open `apps/macos/VoiceOps.xcodeproj` in Xcode.
 2. Build and run the `VoiceOps` scheme.
-3. Grant Microphone, Accessibility, and Input Monitoring permissions when prompted.
+3. Press `Command + Option + P`, open Permissions, and use each permission button once.
+
+The app only reads permission status at launch and never loops automatic requests. A stable local signing requirement, `com.voiceops.VoiceOps`, lets macOS recognize rebuilds at the same path as the same app.
 
 The app also tries to start sidecars on launch. It looks for `.venv/bin/python` in each sidecar directory, then falls back to `VOICEOPS_PYTHON_PATH` or `/usr/bin/python3`.
 
@@ -138,7 +130,6 @@ Core pieces:
 | Fast ASR | `8790` | `POST /v1/fast_asr/push` | Push base64 float32 PCM chunks |
 | Fast ASR | `8790` | `POST /v1/fast_asr/end` | Close streaming session |
 | Ollama | `11434` | `POST /api/chat` | Offline translation or polishing |
-| LLM stub | `8787` | Demo FastAPI service | Optional development stub |
 
 Sidecar logs are written to `~/Library/Logs/VoiceOps/sidecar_*.log` when launched by the app.
 
@@ -162,7 +153,6 @@ apps/macos/VoiceOps/          macOS SwiftUI/AppKit app
 apps/macos/project.yml        XcodeGen project definition
 sidecars/asr_mlx/             FastAPI wrapper around mlx-audio final ASR
 sidecars/fast_asr/            FastAPI sherpa-onnx streaming ASR service
-sidecars/llm_stub/            Optional FastAPI demo LLM endpoint
 models/zipformer/             Expected fast ASR model directory
 docs/                         Project notes and generated README assets
 scripts/dev_run.sh            Development sidecar launcher

@@ -29,6 +29,7 @@ final class LLMRouter {
     func route(text: String) async -> RoutedResult {
         let offlineStart = CFAbsoluteTimeGetCurrent()
         var offlineLatency: Int?
+        let modelName = offlineClient.modelName
 
         do {
             let translated = try await offlineClient.translate(text: text, profile: .voice)
@@ -38,7 +39,7 @@ final class LLMRouter {
                 offlineUsed: true,
                 action: .translate,
                 reason: nil,
-                modelUsed: "offline",
+                modelUsed: modelName,
                 offlineLatency: offlineLatency,
                 codexLatency: nil
             )
@@ -47,7 +48,7 @@ final class LLMRouter {
                 action: .translate,
                 reason: nil,
                 offlineUsed: true,
-                modelUsed: "offline",
+                modelUsed: modelName,
                 offlineLatencyMs: offlineLatency,
                 codexLatencyMs: nil
             )
@@ -57,7 +58,7 @@ final class LLMRouter {
                 offlineUsed: false,
                 action: .direct,
                 reason: "offline_failed",
-                modelUsed: "offline",
+                modelUsed: modelName,
                 offlineLatency: offlineLatency,
                 codexLatency: nil
             )
@@ -66,7 +67,7 @@ final class LLMRouter {
                 action: .direct,
                 reason: "offline_failed",
                 offlineUsed: false,
-                modelUsed: "offline",
+                modelUsed: modelName,
                 offlineLatencyMs: offlineLatency,
                 codexLatencyMs: nil
             )

@@ -14,7 +14,6 @@ final class SidecarLauncher {
     private let sidecars: [Sidecar] = [
         Sidecar(name: "asr_mlx", directory: "asr_mlx", script: "server.py", port: 8765),
         Sidecar(name: "fast_asr", directory: "fast_asr", script: "server.py", port: 8790),
-        Sidecar(name: "llm_stub", directory: "llm_stub", script: "server.py", port: 8787),
     ]
 
     private var processes: [String: Process] = [:]
@@ -162,7 +161,14 @@ final class SidecarLauncher {
         if !FileManager.default.fileExists(atPath: url.path) {
             FileManager.default.createFile(atPath: url.path, contents: nil)
         }
-        return try? FileHandle(forWritingTo: url)
+        do {
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.seekToEnd()
+            return handle
+        } catch {
+            print("[sidecar] log_open_failed path=\(url.path) error=\(error)")
+            return nil
+        }
     }
 
     private func isPortOpen(_ port: Int) async -> Bool {
