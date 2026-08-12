@@ -1,46 +1,45 @@
 # MLX VoiceOps
 
-English | [中文](README.zh.md)
+English · [中文](README.zh.md)
 
 ![MLX VoiceOps local voice workflow](docs/assets/voiceops-hero.png)
 
-MLX VoiceOps is a local-first macOS menu bar app for voice-driven writing and translation. Hold the activation key, speak, watch a low-latency preview, and release to run a final ASR pass plus an offline LLM rewrite before the result is inserted back into the focused app.
+MLX VoiceOps is a local-first macOS menu bar app for voice input, translation, and writing assistance. Hold `Fn`, speak naturally, and release: VoiceOps transcribes the complete utterance, runs an optional local rewrite, and inserts the result back into the app you were using.
 
-The project is built around Apple Silicon local inference: a SwiftUI/AppKit macOS app, FastAPI sidecars for speech recognition, and Ollama for offline text processing.
+The entire inference path runs on your Apple Silicon Mac with MLX, sherpa-onnx, and Ollama. Network access is only needed to install dependencies and download models.
 
-## What it does
+> This project currently targets English-to-Chinese voice workflows by default. Translation, voice polishing, and action-summary prompts are editable in Preferences.
 
-- Hold-to-talk input: hold `Fn` by default to start recording, release to finish and inject the result.
-- Streaming preview: a fast sherpa-onnx sidecar receives short PCM chunks and updates the floating preview while you speak.
-- Final transcription: a mlx-audio sidecar runs the final WAV transcription on release.
-- Offline LLM processing: Ollama `/api/chat` translates or polishes the final text with editable prompt templates.
-- Selection translation: trigger a shortcut to capture selected text and translate it in a dedicated panel.
-- Clipboard history: records clipboard items and VoiceOps outputs for quick reuse.
-- Local sidecar lifecycle: the app can launch sidecars automatically when their virtual environments are ready.
-- Focus-safe insertion: the preview does not become key, and final injection is skipped when focus moved away during recording.
+## What you can do
 
-By default, the built-in prompt profile translates spoken English into natural Chinese. You can change the voice and selection prompt templates in Preferences.
+| Action | Default shortcut | Result |
+| --- | --- | --- |
+| Voice input | Hold `Fn`, then release | Live preview, final transcription, local LLM processing, and insertion |
+| Translate selected text | `Command + Option + T` | Opens a streaming local translation panel |
+| Open clipboard history | `Command + Fn` | Searches and reuses recent text, images, and VoiceOps output |
+| Open Preferences | `Command + Option + P` | Opens setup even when the menu bar item is hidden |
+
+VoiceOps combines two speech recognizers:
+
+- a compact sherpa-onnx model for low-latency preview while you speak;
+- a GLM-ASR MLX model for the accurate final transcript after release.
+
+The final text is processed by the local Ollama model. If the model is unavailable, the voice workflow falls back to the original transcript instead of losing your input.
 
 ## Requirements
 
-- macOS 13.0 or later
-- Apple Silicon Mac recommended for MLX-based ASR
-- Xcode for building the macOS app
-- Python 3.9+ for sidecars
-- Ollama for offline LLM processing
-- `xcodegen` only if you edit `apps/macos/project.yml`
+- macOS 13 or later
+- Apple Silicon Mac
+- Xcode
+- Python 3.9 or later
+- [Ollama for macOS](https://ollama.com/download/mac)
+- Internet access during the first installation
 
-Model/runtime expectations:
+The first installation downloads several gigabytes of models. The default install is per-user and does not require an administrator password.
 
-- Final ASR defaults to `mlx-community/GLM-ASR-Nano-2512-8bit` through `ASR_MODEL_ID`.
-- `sidecars/asr_mlx/server.py` runs offline; the installer downloads the selected model into the local Hugging Face cache first.
-- Fast ASR expects sherpa-onnx transducer files under `models/zipformer` unless `FAST_ASR_MODEL_DIR` is set.
-- Ollama defaults to `qwen2.5-coder:7b-instruct-q5_1`.
+## Install
 
-## One-command install
-
-Install [Ollama for macOS](https://ollama.com/download/mac) first. Then clone the repository and run the installer:
-
+Install and open Ollama first. Then run:
 
 ```bash
 git clone https://github.com/xiaokhkh/mlx-voiceops.git
@@ -48,138 +47,168 @@ cd mlx-voiceops
 ./scripts/install.sh
 ```
 
-The installer is safe to rerun. It:
+The installer can be run again safely. It will:
 
-- creates and updates both Python virtual environments;
-- downloads the compact bilingual streaming model and the final MLX ASR model;
-- starts Ollama when needed and pulls the default local LLM;
-- builds the Release app and installs it to `~/Applications/VoiceOps.app`;
-- records the checkout's sidecar path so the installed app can launch its local services;
-- launches VoiceOps and opens Preferences on the first run.
+1. create or update both Python virtual environments;
+2. install the minimal speech-recognition dependency set;
+3. download the streaming and final ASR models when missing;
+4. start Ollama when necessary and pull the default LLM;
+5. build the Release app;
+6. install it at `~/Applications/VoiceOps.app`;
+7. remember this checkout's sidecar location;
+8. launch VoiceOps.
 
-The first install downloads several gigabytes of local models. No administrator password is required. Useful options:
+### First run
 
-```text
---skip-models       Keep existing ASR models and skip downloads
---skip-ollama       Skip the Ollama check and model pull
---no-launch         Install without opening the app
---install-dir PATH  Choose a different per-user app directory
---python PATH       Choose the Python 3.9+ executable
-```
+Preferences opens automatically the first time VoiceOps starts.
 
-Check the entire installation at any time without changing it:
+1. Open the **Permissions** tab.
+2. Grant **Input Monitoring**, **Accessibility**, and **Microphone** access once.
+3. Return to VoiceOps and click **Refresh Status**.
+4. Confirm that permissions and Local Runtime items are green.
+5. Focus a text field, hold `Fn`, speak, and release.
+
+Permission requests are only triggered by the corresponding buttons or a voice action. VoiceOps does not repeatedly request permissions at launch.
+
+## Diagnose a setup
+
+Run the read-only doctor whenever installation or recognition is not working:
 
 ```bash
 ./scripts/doctor.sh
 ```
 
-On the first launch, Preferences opens to the setup checklist. Use each permission button once for Microphone, Accessibility, and Input Monitoring. You can reopen it later with `Command + Option + P`, even when the menu bar item is hidden.
+It checks the Mac architecture, build tools, Python environments, ASR models, local ports, Ollama model, installed app, code signature, and saved sidecar path.
 
-The app only reads permission status at launch and never loops automatic requests. A stable local signing requirement, `com.voiceops.VoiceOps`, lets macOS recognize rebuilds at the same path as the same app. The Permissions panel also reports whether both sidecar environments and the streaming model are ready, with direct access to local logs.
+Common fixes:
 
-## Usage
+| Symptom | Fix |
+| --- | --- |
+| A model or environment is missing | Run `./scripts/install.sh` again |
+| The repository was moved | Run the installer again to refresh the saved sidecar path |
+| A local service is offline | Launch VoiceOps, then inspect logs from Preferences → Permissions → Open Logs |
+| `Fn` does nothing | Enable Input Monitoring and avoid password fields while testing |
+| Text is not inserted | Enable Accessibility and keep focus in the original target app |
+| Microphone is unavailable | Use the Microphone button in Preferences; do not repeatedly relaunch the app |
+| Ollama is unavailable | Open Ollama, then run `ollama pull qwen2.5-coder:7b-instruct-q5_1` |
 
-- Hold `Fn`: record voice, show the floating preview, then process and insert the final result on release.
-- Clipboard history shortcut: configurable, default `Command + Fn`.
-- Selection translation shortcut: configurable in Preferences.
-- Preferences: update activation keys, permissions, and LLM prompt templates.
+Sidecar logs are stored in:
 
-The app inserts text with paste first and falls back to simulated typing. Accessibility permission is required for reliable injection.
+```text
+~/Library/Logs/VoiceOps/
+```
 
-## Architecture
+## Installer options
+
+```text
+./scripts/install.sh [options]
+
+--skip-models       Keep existing ASR models and skip model downloads
+--skip-ollama       Skip Ollama checks and the model pull
+--no-launch         Install without opening VoiceOps
+--install-dir PATH  Install outside ~/Applications
+--python PATH       Use a specific Python 3.9+ executable
+```
+
+Environment overrides:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `VOICEOPS_INSTALL_DIR` | `~/Applications` | Per-user app installation directory |
+| `VOICEOPS_SETUP_PYTHON` | `python3` | Python used to create sidecar environments |
+| `VOICEOPS_OLLAMA_MODEL` | `qwen2.5-coder:7b-instruct-q5_1` | Ollama model prepared by the installer |
+| `ASR_MODEL_ID` | `mlx-community/GLM-ASR-Nano-2512-8bit` | Final MLX ASR model |
+| `FAST_ASR_MODEL_DIR` | `models/zipformer` | Streaming model directory |
+| `FAST_ASR_SAMPLE_RATE` | `16000` | Streaming PCM sample rate |
+| `FAST_ASR_NUM_THREADS` | `4` | Streaming decoder thread count |
+| `VOICEOPS_SIDECAR_ROOT` | Auto-discovered | Override the sidecar directory used by the app |
+| `VOICEOPS_PYTHON_PATH` | Sidecar `.venv` | Override the Python executable used by the app |
+
+## Local models and data
+
+| Component | Default | Local location |
+| --- | --- | --- |
+| Streaming ASR | sherpa-onnx bilingual Zipformer | `models/zipformer/` |
+| Final ASR | `mlx-community/GLM-ASR-Nano-2512-8bit` | Hugging Face cache |
+| Text processing | `qwen2.5-coder:7b-instruct-q5_1` | Ollama model store |
+| Clipboard history | Up to 200 recent items | `~/Library/Application Support/mlx-voiceops/` |
+| Runtime logs | Sidecar stdout and stderr | `~/Library/Logs/VoiceOps/` |
+
+After setup, audio transcription and LLM processing use loopback-only local services. Prompt templates are stored in macOS user defaults and can be edited under Preferences → LLM.
+
+## How it works
 
 ```mermaid
 flowchart LR
-    A["Hold Fn"] --> B["AudioCaptureService"]
-    B --> C["Fast ASR sidecar<br/>sherpa-onnx :8790"]
-    C --> D["Preview panel"]
-    B --> E["Final ASR sidecar<br/>mlx-audio :8765"]
-    E --> F["LLMRouter"]
-    F --> G["Ollama /api/chat<br/>:11434"]
-    G --> H["FocusInjector"]
-    H --> I["Focused macOS app"]
-    J["SelectionCaptureService"] --> F
-    H --> K["ClipboardStore"]
+    A["Hold Fn"] --> B["Capture microphone audio"]
+    B --> C["Streaming ASR :8790"]
+    C --> D["Floating preview"]
+    B --> E["Final MLX ASR :8765"]
+    E --> F["Local Ollama LLM :11434"]
+    F --> G["Focus-safe insertion"]
+    H["Selected text"] --> F
+    G --> I["Clipboard history"]
 ```
 
-Core pieces:
-
-- `apps/macos/VoiceOps/AppMain.swift`: menu bar app startup, shortcuts, preferences, panels, and sidecar launcher.
-- `apps/macos/VoiceOps/Services/FnSessionController.swift`: hold-to-talk session orchestration.
-- `apps/macos/VoiceOps/Services/AudioCaptureService.swift`: microphone capture and WAV/PCM chunking.
-- `apps/macos/VoiceOps/Services/FastASRClient.swift`: streaming preview client for the fast ASR sidecar.
-- `apps/macos/VoiceOps/Services/ASRClient.swift`: final ASR client for the MLX sidecar.
-- `apps/macos/VoiceOps/Services/OfflineLLMClient.swift`: Ollama chat client and prompt templates.
-- `apps/macos/VoiceOps/Services/FocusInjector.swift`: focus-aware text injection.
-- `apps/macos/VoiceOps/Clipboard/`: clipboard history models, storage, and UI.
-
-## Sidecars and local endpoints
-
-| Component | Default port | Endpoint | Purpose |
-| --- | ---: | --- | --- |
-| Final ASR | `8765` | `GET /health` | Readiness check used by the installer doctor |
-| Final ASR | `8765` | `POST /v1/asr/transcribe` | Multipart WAV to final text |
-| Fast ASR | `8790` | `POST /v1/fast_asr/start` | Create streaming session |
-| Fast ASR | `8790` | `POST /v1/fast_asr/push` | Push base64 float32 PCM chunks |
-| Fast ASR | `8790` | `POST /v1/fast_asr/end` | Close streaming session |
-| Ollama | `11434` | `POST /api/chat` | Offline translation or polishing |
-
-Sidecar logs are written to `~/Library/Logs/VoiceOps/sidecar_*.log` when launched by the app.
-
-## Configuration
-
-| Variable | Used by | Default | Notes |
-| --- | --- | --- | --- |
-| `ASR_MODEL_ID` | `asr_mlx` | `mlx-community/GLM-ASR-Nano-2512-8bit` | MLX final ASR model id |
-| `FAST_ASR_MODEL_DIR` | `fast_asr` | `models/zipformer` | Directory containing `encoder.onnx`, `decoder.onnx`, `joiner.onnx`, `tokens.txt` |
-| `FAST_ASR_SAMPLE_RATE` | `fast_asr` | `16000` | Incoming PCM sample rate |
-| `FAST_ASR_NUM_THREADS` | `fast_asr` | `4` | sherpa-onnx decode threads |
-| `VOICEOPS_SIDECAR_ROOT` | macOS app | auto-discovered `sidecars` | Override sidecar directory |
-| `VOICEOPS_PYTHON_PATH` | macOS app | sidecar `.venv`, then `/usr/bin/python3` | Override Python executable for launched sidecars |
-
-Prompt templates are stored in macOS user defaults and can be edited from Preferences.
-
-## Repository layout
-
-```text
-apps/macos/VoiceOps/          macOS SwiftUI/AppKit app
-apps/macos/project.yml        XcodeGen project definition
-sidecars/asr_mlx/             FastAPI wrapper around mlx-audio final ASR
-sidecars/fast_asr/            FastAPI sherpa-onnx streaming ASR service
-models/zipformer/             Expected fast ASR model directory
-docs/                         Project notes and generated README assets
-scripts/dev_run.sh            Development sidecar launcher
-scripts/install.sh            Idempotent per-user installer
-scripts/doctor.sh             Read-only readiness diagnostics
-```
+The preview window never takes keyboard focus. VoiceOps remembers the foreground app at the beginning of a recording and skips automatic insertion if focus changes before processing finishes.
 
 ## Development
 
-Regenerate the Xcode project after editing `project.yml`:
+The installer is also the fastest way to prepare a development checkout. To run the sidecars manually afterward:
+
+```bash
+./scripts/dev_run.sh
+```
+
+Open the macOS project:
+
+```bash
+open apps/macos/VoiceOps.xcodeproj
+```
+
+If `apps/macos/project.yml` changes, regenerate the Xcode project:
 
 ```bash
 cd apps/macos
 xcodegen generate --spec project.yml
 ```
 
-Useful checks:
+Useful verification commands:
 
 ```bash
 ./scripts/doctor.sh
-./scripts/dev_run.sh
-open apps/macos/VoiceOps.xcodeproj
+python3 -m py_compile sidecars/asr_mlx/server.py sidecars/fast_asr/server.py
+xcodebuild -project apps/macos/VoiceOps.xcodeproj \
+  -scheme VoiceOps -configuration Release build
 ```
 
-Manual testing notes live in `docs/TESTING.md`.
+Manual product checks are documented in [docs/TESTING.md](docs/TESTING.md).
 
-## Permissions
+### Local endpoints
 
-- Microphone: required for voice capture.
-- Accessibility: required for paste/type injection into other apps.
-- Input Monitoring: required for global shortcuts.
+| Service | Port | Endpoint |
+| --- | ---: | --- |
+| Final ASR | `8765` | `GET /health` |
+| Final ASR | `8765` | `POST /v1/asr/transcribe` |
+| Streaming ASR | `8790` | `GET /health` |
+| Streaming ASR | `8790` | `POST /v1/fast_asr/start` |
+| Streaming ASR | `8790` | `POST /v1/fast_asr/push` |
+| Streaming ASR | `8790` | `POST /v1/fast_asr/end` |
+| Ollama | `11434` | `POST /api/chat` |
 
-Use Preferences -> Permissions to review permission state and open the relevant macOS Settings panes.
+### Repository layout
 
-## Status
+```text
+apps/macos/VoiceOps/          SwiftUI and AppKit application
+apps/macos/project.yml        XcodeGen project definition
+sidecars/asr_mlx/             Final GLM-ASR service
+sidecars/fast_asr/            Streaming sherpa-onnx service
+scripts/install.sh            Repeatable per-user installer
+scripts/doctor.sh             Read-only setup diagnostics
+scripts/dev_run.sh            Manual sidecar launcher
+docs/                         Testing notes and project assets
+```
 
-This is an active local-first prototype. The installer now prepares the repeatable local runtime, while macOS permissions remain an explicit one-time user action.
+## Project status
+
+MLX VoiceOps is an active local-first prototype. The main voice pipeline works end to end, but startup latency and recognition quality still depend on the Mac, microphone, language mix, and selected local models.
