@@ -1,6 +1,14 @@
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
-mlx-audio[stt]==0.2.9
+# scripts/install.sh installs mlx-audio==0.2.10 with --no-deps first. The
+# upstream 0.2.10 metadata self-references the "all" extra and otherwise pulls
+# unrelated TTS, WebRTC, and Gradio dependencies.
+mlx-lm>=0.18.0,<0.30.0
+transformers>=4.49.0,<5.0.0
+hf-transfer==0.1.9
+librosa==0.11.0
+pyloudnorm>=0.1.1
+sounddevice>=0.5.1
 soundfile==0.13.1
 python-multipart==0.0.20
 numpy==1.26.4

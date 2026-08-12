@@ -33,65 +33,49 @@ By default, the built-in prompt profile translates spoken English into natural C
 Model/runtime expectations:
 
 - Final ASR defaults to `mlx-community/GLM-ASR-Nano-2512-8bit` through `ASR_MODEL_ID`.
-- `sidecars/asr_mlx/server.py` sets `HF_HUB_OFFLINE=1`, so the default model should already be available in the local Hugging Face cache.
+- `sidecars/asr_mlx/server.py` runs offline; the installer downloads the selected model into the local Hugging Face cache first.
 - Fast ASR expects sherpa-onnx transducer files under `models/zipformer` unless `FAST_ASR_MODEL_DIR` is set.
 - Ollama defaults to `qwen2.5-coder:7b-instruct-q5_1`.
 
-## Quick start
+## One-command install
 
-Clone the repo:
+Install [Ollama for macOS](https://ollama.com/download/mac) first. Then clone the repository and run the installer:
+
 
 ```bash
 git clone https://github.com/xiaokhkh/mlx-voiceops.git
 cd mlx-voiceops
+./scripts/install.sh
 ```
 
-Create the sidecar environments:
+The installer is safe to rerun. It:
+
+- creates and updates both Python virtual environments;
+- downloads the compact bilingual streaming model and the final MLX ASR model;
+- starts Ollama when needed and pulls the default local LLM;
+- builds the Release app and installs it to `~/Applications/VoiceOps.app`;
+- records the checkout's sidecar path so the installed app can launch its local services;
+- launches VoiceOps and opens Preferences on the first run.
+
+The first install downloads several gigabytes of local models. No administrator password is required. Useful options:
+
+```text
+--skip-models       Keep existing ASR models and skip downloads
+--skip-ollama       Skip the Ollama check and model pull
+--no-launch         Install without opening the app
+--install-dir PATH  Choose a different per-user app directory
+--python PATH       Choose the Python 3.9+ executable
+```
+
+Check the entire installation at any time without changing it:
 
 ```bash
-cd sidecars/asr_mlx
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-deactivate
-
-cd ../fast_asr
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-deactivate
+./scripts/doctor.sh
 ```
 
-Optional LLM stub for local API demos:
+On the first launch, Preferences opens to the setup checklist. Use each permission button once for Microphone, Accessibility, and Input Monitoring. You can reopen it later with `Command + Option + P`, even when the menu bar item is hidden.
 
-```bash
-cd ../llm_stub
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-deactivate
-```
-
-Prepare Ollama:
-
-```bash
-ollama serve
-ollama pull qwen2.5-coder:7b-instruct-q5_1
-```
-
-Start sidecars during development:
-
-```bash
-./scripts/dev_run.sh
-```
-
-Build the macOS app:
-
-1. Open `apps/macos/VoiceOps.xcodeproj` in Xcode.
-2. Build and run the `VoiceOps` scheme.
-3. Grant Microphone, Accessibility, and Input Monitoring permissions when prompted.
-
-The app also tries to start sidecars on launch. It looks for `.venv/bin/python` in each sidecar directory, then falls back to `VOICEOPS_PYTHON_PATH` or `/usr/bin/python3`.
+The app only reads permission status at launch and never loops automatic requests. A stable local signing requirement, `com.voiceops.VoiceOps`, lets macOS recognize rebuilds at the same path as the same app. The Permissions panel also reports whether both sidecar environments and the streaming model are ready, with direct access to local logs.
 
 ## Usage
 
@@ -133,12 +117,12 @@ Core pieces:
 
 | Component | Default port | Endpoint | Purpose |
 | --- | ---: | --- | --- |
+| Final ASR | `8765` | `GET /health` | Readiness check used by the installer doctor |
 | Final ASR | `8765` | `POST /v1/asr/transcribe` | Multipart WAV to final text |
 | Fast ASR | `8790` | `POST /v1/fast_asr/start` | Create streaming session |
 | Fast ASR | `8790` | `POST /v1/fast_asr/push` | Push base64 float32 PCM chunks |
 | Fast ASR | `8790` | `POST /v1/fast_asr/end` | Close streaming session |
 | Ollama | `11434` | `POST /api/chat` | Offline translation or polishing |
-| LLM stub | `8787` | Demo FastAPI service | Optional development stub |
 
 Sidecar logs are written to `~/Library/Logs/VoiceOps/sidecar_*.log` when launched by the app.
 
@@ -162,10 +146,11 @@ apps/macos/VoiceOps/          macOS SwiftUI/AppKit app
 apps/macos/project.yml        XcodeGen project definition
 sidecars/asr_mlx/             FastAPI wrapper around mlx-audio final ASR
 sidecars/fast_asr/            FastAPI sherpa-onnx streaming ASR service
-sidecars/llm_stub/            Optional FastAPI demo LLM endpoint
 models/zipformer/             Expected fast ASR model directory
 docs/                         Project notes and generated README assets
 scripts/dev_run.sh            Development sidecar launcher
+scripts/install.sh            Idempotent per-user installer
+scripts/doctor.sh             Read-only readiness diagnostics
 ```
 
 ## Development
@@ -180,6 +165,7 @@ xcodegen generate --spec project.yml
 Useful checks:
 
 ```bash
+./scripts/doctor.sh
 ./scripts/dev_run.sh
 open apps/macos/VoiceOps.xcodeproj
 ```
@@ -196,4 +182,4 @@ Use Preferences -> Permissions to review permission state and open the relevant 
 
 ## Status
 
-This is an active local-first prototype. The core path is already wired end to end, but model availability, Python environments, macOS permissions, and Ollama startup still need to be prepared on each development machine.
+This is an active local-first prototype. The installer now prepares the repeatable local runtime, while macOS permissions remain an explicit one-time user action.

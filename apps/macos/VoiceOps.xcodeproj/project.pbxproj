@@ -37,7 +37,6 @@
 		E5401A720E00D4FAF227A942 /* LLMRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22A6147F3235591061E702C5 /* LLMRouter.swift */; };
 		EC878AA977FA623C4EF188FD /* FnKeyMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E80E9B37C69260A267888469 /* FnKeyMonitor.swift */; };
 		EDCCF18CBC11CFEFB03F4A68 /* InputInjector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FD7D2691611C2FA3E837BAA /* InputInjector.swift */; };
-		EDE998B031BBA4A469370198 /* LLMClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AB0D2B51C2CAD31E36E2ABC /* LLMClient.swift */; };
 		F1261E36233BF186D5A8FC9A /* PreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94431E21EE9DD50FB959EB16 /* PreviewView.swift */; };
 		F9B9E3E1C5F9123456789ABD /* SidecarLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9B9E3E1C5F9123456789ABC /* SidecarLauncher.swift */; };
 		FA12BC34D5E6F708192A3B4C /* SelectionCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA12BC34D5E6F708192A3B4B /* SelectionCaptureService.swift */; };
@@ -59,7 +58,6 @@
 		3161165938F653DCDE60F238 /* FnSessionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FnSessionController.swift; sourceTree = "<group>"; };
 		362C14BC8CA14CC117DBD29F /* HotKeyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotKeyService.swift; sourceTree = "<group>"; };
 		42533B4B80598A0615B7C95E /* CodexClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexClient.swift; sourceTree = "<group>"; };
-		4AB0D2B51C2CAD31E36E2ABC /* LLMClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMClient.swift; sourceTree = "<group>"; };
 		506F54642912F445479D3F7C /* OfflineLLMClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineLLMClient.swift; sourceTree = "<group>"; };
 		59C913B040730154033BE623 /* OverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayView.swift; sourceTree = "<group>"; };
 		6B427B467924F82C18261CFB /* PreviewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewModel.swift; sourceTree = "<group>"; };
@@ -118,7 +116,6 @@
 				CF20785C9D7F331F84EEAD2B /* FocusInjector.swift */,
 				362C14BC8CA14CC117DBD29F /* HotKeyService.swift */,
 				7FD7D2691611C2FA3E837BAA /* InputInjector.swift */,
-				4AB0D2B51C2CAD31E36E2ABC /* LLMClient.swift */,
 				22A6147F3235591061E702C5 /* LLMRouter.swift */,
 				506F54642912F445479D3F7C /* OfflineLLMClient.swift */,
 				AEBC051C45D226CE70A63109 /* Permissions.swift */,
@@ -264,7 +261,6 @@
 				D475445982227CA439F70464 /* FocusInjector.swift in Sources */,
 				550E4A86CFB9951329CE797E /* HotKeyService.swift in Sources */,
 				EDCCF18CBC11CFEFB03F4A68 /* InputInjector.swift in Sources */,
-				EDE998B031BBA4A469370198 /* LLMClient.swift in Sources */,
 				E5401A720E00D4FAF227A942 /* LLMRouter.swift in Sources */,
 				35CD0385DFDA5CD0C27F5726 /* Mode.swift in Sources */,
 				0BE738DCC442D41002456044 /* OfflineLLMClient.swift in Sources */,
@@ -353,6 +349,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CONFIGURATION_BUILD_DIR = "$(PROJECT_DIR)/Build/$(CONFIGURATION)";
 				INFOPLIST_FILE = VoiceOps/Info.plist;
@@ -361,6 +359,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				OTHER_CODE_SIGN_FLAGS = "--requirements $(SRCROOT)/VoiceOps/VoiceOps.requirements";
 				PRODUCT_BUNDLE_IDENTIFIER = com.voiceops.VoiceOps;
 				SDKROOT = macosx;
 			};
@@ -427,6 +426,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CONFIGURATION_BUILD_DIR = "$(PROJECT_DIR)/Build/$(CONFIGURATION)";
 				INFOPLIST_FILE = VoiceOps/Info.plist;
@@ -435,6 +436,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				OTHER_CODE_SIGN_FLAGS = "--requirements $(SRCROOT)/VoiceOps/VoiceOps.requirements";
 				PRODUCT_BUNDLE_IDENTIFIER = com.voiceops.VoiceOps;
 				SDKROOT = macosx;
 			};

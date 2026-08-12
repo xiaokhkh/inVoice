@@ -16,6 +16,7 @@ struct VoiceOpsApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let didShowFirstRunPreferencesKey = "didShowFirstRunPreferences"
     private let statusIdleTitle = "konh"
     private var statusItem: NSStatusItem?
     private var panel: OverlayPanel?
@@ -26,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var translateHotKeyPreference = TranslateHotKeyPreference.defaultValue
     private var hotKeyDefaultsObserver: Any?
     private var settingsWindowController: NSWindowController?
+    private var preferencesHotKey: HotKeyService?
     private let fnMonitor = FnKeyMonitor()
     private let fnSession = FnSessionController()
     private let clipboardObserver = ClipboardObserver.shared
@@ -44,15 +46,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupOverlay()
         setupPreviewPanel()
         setupShortcuts()
+        setupPreferencesHotKey()
         setupFnMonitor()
         bindPipeline()
-        Permissions.requestInputMonitoringIfNeeded()
         clipboardObserver.start()
         sidecarLauncher.startAll()
+
+        let defaults = UserDefaults.standard
+        let isFirstRun = !defaults.bool(forKey: didShowFirstRunPreferencesKey)
+        if isFirstRun {
+            defaults.set(true, forKey: didShowFirstRunPreferencesKey)
+        }
+        if isFirstRun || ProcessInfo.processInfo.environment["VOICEOPS_OPEN_PREFERENCES"] == "1" {
+            DispatchQueue.main.async { [weak self] in
+                self?.openPreferences()
+            }
+        }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
         refreshPermissionState()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openPreferences()
+        return true
     }
 
     private func setupStatusItem() {
@@ -116,6 +134,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func setupPreferencesHotKey() {
+        do {
+            preferencesHotKey = try HotKeyService(
+                keyCode: UInt32(kVK_ANSI_P),
+                modifiers: UInt32(cmdKey | optionKey)
+            ) { [weak self] in
+                Task { @MainActor [weak self] in
+                    self?.openPreferences()
+                }
+            }
+        } catch {
+            print("[hotkey] preferences_register_failed error=\(error)")
+        }
+    }
+
     private func reloadClipboardHotKeyIfNeeded() {
         let latest = HotKeyPreference.load()
         guard latest != clipboardHotKeyPreference else { return }
@@ -156,18 +189,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fnSession.onPreviewText = { [weak self] text in
             self?.previewModel.text = text
         }
-        fnMonitor.start()
+        if Permissions.hasInputMonitoring() {
+            fnMonitor.start()
+        }
     }
 
     private func handleFnDown() {
         guard !fnHoldActive else { return }
+        guard Permissions.hasAccessibility() else {
+            openPreferences()
+            return
+        }
         fnHoldActive = true
         clipboardPanel.hide()
         panel?.hide()
         previewModel.text = ""
         previewModel.state = .recording
         previewPanel?.show()
-        Permissions.requestAccessibilityIfNeeded()
         Task { await fnSession.startSession() }
     }
 
@@ -180,7 +218,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleTranslateSelection() {
         clipboardPanel.hide()
         panel?.hide()
-        Permissions.requestAccessibilityIfNeeded()
+        guard Permissions.hasAccessibility() else {
+            openPreferences()
+            return
+        }
         Task { [weak self] in
             guard let self else { return }
             let selection = await selectionCapture.captureSelection()
@@ -261,6 +302,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refreshPermissionState() {
         if Permissions.hasInputMonitoring() {
             fnMonitor.ensureEventTap()
+        } else {
+            fnMonitor.stop()
         }
     }
 }
@@ -292,6 +335,20 @@ struct HotKeySettingsView: View {
                     title: "Shortcuts",
                     subtitle: "Control how you start recording, search clipboard, and translate selections."
                 )
+
+                SectionCard(title: "Preferences", subtitle: "Open settings even when the menu bar item is hidden.") {
+                    HStack {
+                        Text("Open Preferences")
+                            .font(.headline)
+                        Spacer()
+                        Text("Command+Option+P")
+                            .font(.system(.body, design: .monospaced))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Color.secondary.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                    }
+                }
 
                 SectionCard(title: "Activation", subtitle: "Press and hold to start recording.") {
                     ShortcutRecorderRow(
@@ -341,22 +398,35 @@ struct HotKeySettingsView: View {
 }
 
 struct PreferencesView: View {
+    @State private var selectedTab: Int
+
+    init() {
+        let needsPermission = !Permissions.hasAccessibility()
+            || !Permissions.hasInputMonitoring()
+            || !Permissions.hasMicrophoneAccess()
+        let needsRuntimeSetup = !SidecarLauncher.shared.installationStatus().isReady
+        _selectedTab = State(initialValue: needsPermission || needsRuntimeSetup ? 1 : 2)
+    }
+
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             HotKeySettingsView()
+                .tag(0)
                 .tabItem {
                     Text("Shortcuts")
                 }
             PermissionsPanelView()
+                .tag(1)
                 .tabItem {
                     Text("Permissions")
                 }
             PromptSettingsView()
+                .tag(2)
                 .tabItem {
                     Text("LLM")
                 }
         }
-        .frame(minWidth: 520, minHeight: 360)
+        .frame(minWidth: 620, minHeight: 560)
     }
 }
 
@@ -366,6 +436,7 @@ struct PermissionsPanelView: View {
     @State private var microphoneAllowed = Permissions.hasMicrophoneAccess()
     @State private var microphoneStatus = Permissions.microphoneStatusLabel()
     @State private var isRequestingMicrophone = false
+    @State private var installationStatus = SidecarLauncher.shared.installationStatus()
 
     var body: some View {
         ScrollView {
@@ -407,6 +478,37 @@ struct PermissionsPanelView: View {
                     )
                 }
 
+                SectionCard(title: "Local Runtime", subtitle: "Installed by scripts/install.sh and used for on-device processing.") {
+                    InfoRow(
+                        title: "Sidecar Root",
+                        value: installationStatus.sidecarRootPath ?? "Not configured"
+                    )
+                    RuntimeStatusRow(
+                        title: "Final ASR",
+                        isReady: installationStatus.finalASREnvironmentReady,
+                        readyText: "Environment ready",
+                        missingText: "Run installer"
+                    )
+                    RuntimeStatusRow(
+                        title: "Final ASR Model",
+                        isReady: installationStatus.finalASRModelReady,
+                        readyText: "Model ready",
+                        missingText: "Run installer"
+                    )
+                    RuntimeStatusRow(
+                        title: "Streaming ASR",
+                        isReady: installationStatus.fastASREnvironmentReady,
+                        readyText: "Environment ready",
+                        missingText: "Run installer"
+                    )
+                    RuntimeStatusRow(
+                        title: "Streaming Model",
+                        isReady: installationStatus.fastASRModelReady,
+                        readyText: "Model ready",
+                        missingText: "Run installer"
+                    )
+                }
+
                 SectionCard(title: "Diagnostics", subtitle: "Helpful for support or debugging.") {
                     InfoRow(
                         title: "App Path",
@@ -416,8 +518,11 @@ struct PermissionsPanelView: View {
                         Button("Refresh Status") {
                             refreshStatuses()
                         }
+                        Button("Open Logs") {
+                            NSWorkspace.shared.open(SidecarLauncher.shared.logsDirectoryURL())
+                        }
                         Spacer()
-                        if allPermissionsGranted {
+                        if allPermissionsGranted && installationStatus.isReady {
                             Text("All set")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -468,6 +573,7 @@ struct PermissionsPanelView: View {
         inputMonitoringAllowed = Permissions.hasInputMonitoring()
         microphoneAllowed = Permissions.hasMicrophoneAccess()
         microphoneStatus = Permissions.microphoneStatusLabel()
+        installationStatus = SidecarLauncher.shared.installationStatus()
     }
 
     private func openAccessibilitySettings() {
@@ -496,6 +602,28 @@ struct PermissionsPanelView: View {
         }
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") else { return }
         NSWorkspace.shared.open(url)
+    }
+}
+
+struct RuntimeStatusRow: View {
+    let title: String
+    let isReady: Bool
+    let readyText: String
+    let missingText: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .font(.headline)
+            Spacer()
+            Text(isReady ? readyText : missingText)
+                .font(.caption)
+                .foregroundColor(isReady ? .green : .orange)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background((isReady ? Color.green : Color.orange).opacity(0.12))
+                .clipShape(Capsule())
+        }
     }
 }
 

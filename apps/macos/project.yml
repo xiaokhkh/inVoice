@@ -31,6 +31,9 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.voiceops.VoiceOps
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        OTHER_CODE_SIGN_FLAGS: "--requirements $(SRCROOT)/VoiceOps/VoiceOps.requirements"
         INFOPLIST_FILE: VoiceOps/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CONFIGURATION_BUILD_DIR: $(PROJECT_DIR)/Build/$(CONFIGURATION)

@@ -30,7 +30,6 @@ final class FocusInjector {
 
         guard Permissions.hasAccessibility() else {
             print("[inject] access_denied \(Permissions.accessibilityStatus())")
-            Permissions.requestAccessibilityIfNeeded()
             return false
         }
 
@@ -84,7 +83,6 @@ final class FocusInjector {
         guard !data.isEmpty else { return true }
         guard Permissions.hasAccessibility() else {
             print("[inject] access_denied \(Permissions.accessibilityStatus())")
-            Permissions.requestAccessibilityIfNeeded()
             return false
         }
 

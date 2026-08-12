@@ -7,7 +7,6 @@ from pathlib import Path
 from fastapi import FastAPI, UploadFile, File
 from pydantic import BaseModel
 import uvicorn
-import threading
 import numpy as np
 import soundfile as sf
 
@@ -53,7 +52,44 @@ def _ensure_py39_compat() -> None:
         pass
 
 
+def _ensure_glmasr_no_torch_compat() -> None:
+    """Remove mlx-audio's torch-only type annotation dependency.
+
+    mlx-audio 0.2.x imports ``torch.nn`` in its STT generate helper solely for
+    two ``nn.Module`` annotations. GLM-ASR imports the helper for ``wired_limit``
+    and otherwise has no PyTorch runtime dependency.
+    """
+    try:
+        import site
+
+        candidates = []
+        if hasattr(site, "getsitepackages"):
+            candidates.extend(site.getsitepackages())
+        candidates.append(site.getusersitepackages())
+
+        for base in candidates:
+            if not base:
+                continue
+            generate_path = Path(base) / "mlx_audio" / "stt" / "generate.py"
+            if not generate_path.exists():
+                continue
+            text = generate_path.read_text(encoding="utf-8")
+            if "import torch.nn as nn" not in text:
+                return
+            text = text.replace("import torch.nn as nn\n", "")
+            text = text.replace(
+                "from typing import List, Optional, Union",
+                "from typing import Any, List, Optional, Union",
+            )
+            text = text.replace("nn.Module", "Any")
+            generate_path.write_text(text, encoding="utf-8")
+            return
+    except Exception:
+        pass
+
+
 _ensure_py39_compat()
+_ensure_glmasr_no_torch_compat()
 
 from mlx_audio.stt.utils import load_model
 
@@ -83,11 +119,16 @@ def _warm_up_model() -> None:
         pass
 
 
-threading.Thread(target=_warm_up_model, daemon=True).start()
+_warm_up_model()
 
 
 class TranscribeResp(BaseModel):
     text: str
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "model": MODEL_ID}
 
 
 def _trim_silence(path: str, top_db: float = 40.0) -> int:
@@ -177,10 +218,15 @@ async def transcribe(file: UploadFile = File(...)):
                 )
                 return TranscribeResp(text="")
             raise
-        text = (getattr(res, "text", "") or "").strip()
-        if not text and getattr(res, "segments", None):
+        if isinstance(res, dict):
+            text = (res.get("text", "") or "").strip()
+            segments = res.get("segments")
+        else:
+            text = (getattr(res, "text", "") or "").strip()
+            segments = getattr(res, "segments", None)
+        if not text and segments:
             try:
-                text = " ".join(seg.get("text", "").strip() for seg in res.segments).strip()
+                text = " ".join(seg.get("text", "").strip() for seg in segments).strip()
             except Exception:
                 text = ""
         total_ms = int((time.perf_counter() - t0) * 1000)

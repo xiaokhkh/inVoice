@@ -66,7 +66,6 @@ final class FnSessionController {
             onIndicatorChange?(.idle)
             return
         }
-        Permissions.requestAccessibilityIfNeeded()
         currentSessionID = UUID()
         let selection = await selectionCapture.captureSelection()
         selectedTextSnapshot = selection.text

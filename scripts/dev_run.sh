@@ -20,6 +20,5 @@ run_sidecar() {
 
 run_sidecar "asr" "$ROOT_DIR/sidecars/asr_mlx" 8765 &
 run_sidecar "fast_asr" "$ROOT_DIR/sidecars/fast_asr" 8790 &
-run_sidecar "llm" "$ROOT_DIR/sidecars/llm_stub" 8787 &
 
 wait

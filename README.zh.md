@@ -33,65 +33,49 @@ MLX VoiceOps 是一个本地优先的 macOS 菜单栏 App，用于语音输入�
 模型和运行时预期：
 
 - 最终 ASR 默认使用 `ASR_MODEL_ID=mlx-community/GLM-ASR-Nano-2512-8bit`。
-- `sidecars/asr_mlx/server.py` 会设置 `HF_HUB_OFFLINE=1`，所以默认模型需要已经存在于本机 Hugging Face 缓存中。
+- `sidecars/asr_mlx/server.py` 以离线模式运行；安装器会先把所选模型下载到本机 Hugging Face 缓存。
 - 快速 ASR 默认从 `models/zipformer` 读取 sherpa-onnx transducer 文件，除非设置了 `FAST_ASR_MODEL_DIR`。
 - Ollama 默认模型为 `qwen2.5-coder:7b-instruct-q5_1`。
 
-## 快速开始
+## 一键安装
 
-克隆仓库：
+先安装 [macOS 版 Ollama](https://ollama.com/download/mac)，然后克隆仓库并运行安装器：
+
 
 ```bash
 git clone https://github.com/xiaokhkh/mlx-voiceops.git
 cd mlx-voiceops
+./scripts/install.sh
 ```
 
-创建 sidecar 虚拟环境：
+安装器可以安全地重复执行，它会：
+
+- 创建并更新两个 Python 虚拟环境；
+- 下载轻量的中英双语流式模型和最终 MLX ASR 模型；
+- 在需要时启动 Ollama，并拉取默认本地 LLM；
+- 构建 Release App，安装到 `~/Applications/VoiceOps.app`；
+- 记录当前仓库的 sidecar 路径，让安装后的 App 能自动启动本地服务；
+- 启动 VoiceOps，并在首次运行时自动打开 Preferences。
+
+首次安装需要下载数 GB 的本地模型，不需要管理员密码。常用选项：
+
+```text
+--skip-models       保留已有 ASR 模型并跳过下载
+--skip-ollama       跳过 Ollama 检查和模型拉取
+--no-launch         安装后不启动 App
+--install-dir PATH  选择其他用户级 App 安装目录
+--python PATH       指定 Python 3.9+ 可执行文件
+```
+
+随时可以运行只读诊断，检查完整安装状态：
 
 ```bash
-cd sidecars/asr_mlx
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-deactivate
-
-cd ../fast_asr
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-deactivate
+./scripts/doctor.sh
 ```
 
-可选的 LLM stub，用于本地 API 演示：
+首次启动时，Preferences 会自动打开到设置清单。分别点击一次麦克风、辅助功能和输入监控的授权按钮即可。之后即使菜单栏图标被隐藏，也可以按 `Command + Option + P` 重新打开。
 
-```bash
-cd ../llm_stub
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-deactivate
-```
-
-准备 Ollama：
-
-```bash
-ollama serve
-ollama pull qwen2.5-coder:7b-instruct-q5_1
-```
-
-开发时启动 sidecar：
-
-```bash
-./scripts/dev_run.sh
-```
-
-构建 macOS App：
-
-1. 用 Xcode 打开 `apps/macos/VoiceOps.xcodeproj`。
-2. Build & Run `VoiceOps` scheme。
-3. 按提示授予麦克风、辅助功能和输入监控权限。
-
-App 启动时也会尝试自动拉起 sidecar。它会优先查找各 sidecar 目录下的 `.venv/bin/python`，再回退到 `VOICEOPS_PYTHON_PATH` 或 `/usr/bin/python3`。
+App 启动时只读取权限状态，不会自动循环请求。项目使用固定的本地签名 requirement `com.voiceops.VoiceOps`，因此同一路径下重新构建后，macOS 仍能识别为同一个 App。Permissions 面板也会显示两个 sidecar 环境和流式模型是否就绪，并可直接打开本地日志。
 
 ## 使用方式
 
@@ -133,12 +117,12 @@ flowchart LR
 
 | 组件 | 默认端口 | 端点 | 用途 |
 | --- | ---: | --- | --- |
+| 最终 ASR | `8765` | `GET /health` | 安装诊断使用的就绪检查 |
 | 最终 ASR | `8765` | `POST /v1/asr/transcribe` | Multipart WAV 转最终文本 |
 | 快速 ASR | `8790` | `POST /v1/fast_asr/start` | 创建流式识别会话 |
 | 快速 ASR | `8790` | `POST /v1/fast_asr/push` | 推送 base64 float32 PCM 分片 |
 | 快速 ASR | `8790` | `POST /v1/fast_asr/end` | 结束流式识别会话 |
 | Ollama | `11434` | `POST /api/chat` | 离线翻译或润色 |
-| LLM stub | `8787` | FastAPI demo 服务 | 可选开发 stub |
 
 由 App 拉起 sidecar 时，日志会写入 `~/Library/Logs/VoiceOps/sidecar_*.log`。
 
@@ -162,10 +146,11 @@ apps/macos/VoiceOps/          SwiftUI/AppKit macOS App
 apps/macos/project.yml        XcodeGen 项目定义
 sidecars/asr_mlx/             基于 mlx-audio 的最终 ASR FastAPI wrapper
 sidecars/fast_asr/            基于 sherpa-onnx 的流式 ASR FastAPI 服务
-sidecars/llm_stub/            可选 FastAPI demo LLM 端点
 models/zipformer/             快速 ASR 默认模型目录
 docs/                         项目说明和 README 配图资产
 scripts/dev_run.sh            开发用 sidecar 启动脚本
+scripts/install.sh            可重复执行的用户级安装器
+scripts/doctor.sh             只读就绪状态诊断
 ```
 
 ## 开发
@@ -180,6 +165,7 @@ xcodegen generate --spec project.yml
 常用检查：
 
 ```bash
+./scripts/doctor.sh
 ./scripts/dev_run.sh
 open apps/macos/VoiceOps.xcodeproj
 ```
@@ -196,4 +182,4 @@ open apps/macos/VoiceOps.xcodeproj
 
 ## 状态
 
-这是一个本地优先的活跃原型。核心链路已经端到端打通，但每台开发机器仍需要准备模型、Python 环境、macOS 权限和 Ollama 启动状态。
+这是一个本地优先的活跃原型。安装器现在负责准备可重复的本地运行环境，macOS 权限仍由用户明确地一次性授予。

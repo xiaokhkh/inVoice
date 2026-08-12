@@ -6,6 +6,7 @@ import IOKit.hid
 enum Permissions {
     private static var didPromptAccessibility = false
     private static var didPromptInputMonitoring = false
+    private static var didPromptMicrophone = false
 
     static func hasAccessibility() -> Bool {
         AXIsProcessTrusted()
@@ -51,6 +52,8 @@ enum Permissions {
         case .authorized:
             return true
         case .notDetermined:
+            guard !didPromptMicrophone else { return false }
+            didPromptMicrophone = true
             return await withCheckedContinuation { cont in
                 AVCaptureDevice.requestAccess(for: .audio) { granted in
                     cont.resume(returning: granted)
@@ -81,6 +84,6 @@ enum Permissions {
     }
 
     static func microphoneNeedsRequest() -> Bool {
-        AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined
+        AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined && !didPromptMicrophone
     }
 }
