@@ -126,6 +126,11 @@ class TranscribeResp(BaseModel):
     text: str
 
 
+@app.get("/health")
+def health():
+    return {"status": "ok", "model": MODEL_ID}
+
+
 def _trim_silence(path: str, top_db: float = 40.0) -> int:
     try:
         audio, sr = sf.read(path, dtype="float32")

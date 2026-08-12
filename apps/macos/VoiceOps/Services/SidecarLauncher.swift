@@ -4,6 +4,22 @@ import Network
 final class SidecarLauncher {
     static let shared = SidecarLauncher()
 
+    struct InstallationStatus {
+        let sidecarRootPath: String?
+        let finalASREnvironmentReady: Bool
+        let finalASRModelReady: Bool
+        let fastASREnvironmentReady: Bool
+        let fastASRModelReady: Bool
+
+        var isReady: Bool {
+            sidecarRootPath != nil
+                && finalASREnvironmentReady
+                && finalASRModelReady
+                && fastASREnvironmentReady
+                && fastASRModelReady
+        }
+    }
+
     struct Sidecar {
         let name: String
         let directory: String
@@ -37,6 +53,47 @@ final class SidecarLauncher {
             try? handle.close()
         }
         logHandles.removeAll()
+    }
+
+    func installationStatus() -> InstallationStatus {
+        guard let root = findSidecarRoot() else {
+            return InstallationStatus(
+                sidecarRootPath: nil,
+                finalASREnvironmentReady: false,
+                finalASRModelReady: false,
+                fastASREnvironmentReady: false,
+                fastASRModelReady: false
+            )
+        }
+
+        let finalASRDirectory = root.appendingPathComponent("asr_mlx", isDirectory: true)
+        let fastASRDirectory = root.appendingPathComponent("fast_asr", isDirectory: true)
+        let modelDirectory: URL
+        if let customModelDirectory = ProcessInfo.processInfo.environment["FAST_ASR_MODEL_DIR"] {
+            modelDirectory = URL(fileURLWithPath: customModelDirectory, isDirectory: true)
+        } else {
+            modelDirectory = root
+                .deletingLastPathComponent()
+                .appendingPathComponent("models/zipformer", isDirectory: true)
+        }
+        let requiredModelFiles = ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt", "bpe.model"]
+
+        return InstallationStatus(
+            sidecarRootPath: root.path,
+            finalASREnvironmentReady: hasVirtualEnvironment(in: finalASRDirectory),
+            finalASRModelReady: hasFinalASRModel(),
+            fastASREnvironmentReady: hasVirtualEnvironment(in: fastASRDirectory),
+            fastASRModelReady: requiredModelFiles.allSatisfy { filename in
+                FileManager.default.fileExists(atPath: modelDirectory.appendingPathComponent(filename).path)
+            }
+        )
+    }
+
+    func logsDirectoryURL() -> URL {
+        let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
+        let logs = library.appendingPathComponent("Logs/VoiceOps", isDirectory: true)
+        try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        return logs
     }
 
     private func startAllAsync() async {
@@ -126,6 +183,33 @@ final class SidecarLauncher {
         return nil
     }
 
+    private func hasVirtualEnvironment(in sidecarDirectory: URL) -> Bool {
+        let python = sidecarDirectory.appendingPathComponent(".venv/bin/python")
+        let python3 = sidecarDirectory.appendingPathComponent(".venv/bin/python3")
+        return FileManager.default.isExecutableFile(atPath: python.path)
+            || FileManager.default.isExecutableFile(atPath: python3.path)
+    }
+
+    private func hasFinalASRModel() -> Bool {
+        let environment = ProcessInfo.processInfo.environment
+        let cacheRoot: URL
+        if let customCache = environment["HF_HUB_CACHE"], !customCache.isEmpty {
+            cacheRoot = URL(fileURLWithPath: customCache, isDirectory: true)
+        } else if let huggingFaceHome = environment["HF_HOME"], !huggingFaceHome.isEmpty {
+            cacheRoot = URL(fileURLWithPath: huggingFaceHome, isDirectory: true)
+                .appendingPathComponent("hub", isDirectory: true)
+        } else {
+            cacheRoot = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".cache/huggingface/hub", isDirectory: true)
+        }
+        let modelID = environment["ASR_MODEL_ID"] ?? "mlx-community/GLM-ASR-Nano-2512-8bit"
+        let cacheName = "models--" + modelID.replacingOccurrences(of: "/", with: "--")
+        let snapshots = cacheRoot
+            .appendingPathComponent(cacheName, isDirectory: true)
+            .appendingPathComponent("snapshots", isDirectory: true)
+        return FileManager.default.enumerator(atPath: snapshots.path)?.nextObject() != nil
+    }
+
     private func findSidecarRoot() -> URL? {
         if let value = ProcessInfo.processInfo.environment["VOICEOPS_SIDECAR_ROOT"] {
             let url = URL(fileURLWithPath: value)
@@ -139,6 +223,10 @@ final class SidecarLauncher {
             return resourceRoot
         }
 
+        if let configuredRoot = configuredSidecarRoot() {
+            return configuredRoot
+        }
+
         var cursor = Bundle.main.bundleURL
         for _ in 0..<6 {
             let candidate = cursor.deletingLastPathComponent().appendingPathComponent("sidecars")
@@ -150,11 +238,23 @@ final class SidecarLauncher {
         return nil
     }
 
+    private func configuredSidecarRoot() -> URL? {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let configURL = support
+            .appendingPathComponent("VoiceOps", isDirectory: true)
+            .appendingPathComponent("sidecar-root")
+        guard let value = try? String(contentsOf: configURL, encoding: .utf8) else {
+            return nil
+        }
+        let path = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: path, isDirectory: true)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
+    }
+
     private func logFileURL(name: String) -> URL {
-        let support = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
-        let logs = support.appendingPathComponent("Logs/VoiceOps", isDirectory: true)
-        try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
-        return logs.appendingPathComponent("sidecar_\(name).log")
+        logsDirectoryURL().appendingPathComponent("sidecar_\(name).log")
     }
 
     private func logHandle(for url: URL) -> FileHandle? {

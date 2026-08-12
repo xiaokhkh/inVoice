@@ -16,6 +16,7 @@ struct VoiceOpsApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let didShowFirstRunPreferencesKey = "didShowFirstRunPreferences"
     private let statusIdleTitle = "konh"
     private var statusItem: NSStatusItem?
     private var panel: OverlayPanel?
@@ -51,7 +52,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clipboardObserver.start()
         sidecarLauncher.startAll()
 
-        if ProcessInfo.processInfo.environment["VOICEOPS_OPEN_PREFERENCES"] == "1" {
+        let defaults = UserDefaults.standard
+        let isFirstRun = !defaults.bool(forKey: didShowFirstRunPreferencesKey)
+        if isFirstRun {
+            defaults.set(true, forKey: didShowFirstRunPreferencesKey)
+        }
+        if isFirstRun || ProcessInfo.processInfo.environment["VOICEOPS_OPEN_PREFERENCES"] == "1" {
             DispatchQueue.main.async { [weak self] in
                 self?.openPreferences()
             }
@@ -398,7 +404,8 @@ struct PreferencesView: View {
         let needsPermission = !Permissions.hasAccessibility()
             || !Permissions.hasInputMonitoring()
             || !Permissions.hasMicrophoneAccess()
-        _selectedTab = State(initialValue: needsPermission ? 1 : 2)
+        let needsRuntimeSetup = !SidecarLauncher.shared.installationStatus().isReady
+        _selectedTab = State(initialValue: needsPermission || needsRuntimeSetup ? 1 : 2)
     }
 
     var body: some View {
@@ -419,7 +426,7 @@ struct PreferencesView: View {
                     Text("LLM")
                 }
         }
-        .frame(minWidth: 520, minHeight: 360)
+        .frame(minWidth: 620, minHeight: 560)
     }
 }
 
@@ -429,6 +436,7 @@ struct PermissionsPanelView: View {
     @State private var microphoneAllowed = Permissions.hasMicrophoneAccess()
     @State private var microphoneStatus = Permissions.microphoneStatusLabel()
     @State private var isRequestingMicrophone = false
+    @State private var installationStatus = SidecarLauncher.shared.installationStatus()
 
     var body: some View {
         ScrollView {
@@ -470,6 +478,37 @@ struct PermissionsPanelView: View {
                     )
                 }
 
+                SectionCard(title: "Local Runtime", subtitle: "Installed by scripts/install.sh and used for on-device processing.") {
+                    InfoRow(
+                        title: "Sidecar Root",
+                        value: installationStatus.sidecarRootPath ?? "Not configured"
+                    )
+                    RuntimeStatusRow(
+                        title: "Final ASR",
+                        isReady: installationStatus.finalASREnvironmentReady,
+                        readyText: "Environment ready",
+                        missingText: "Run installer"
+                    )
+                    RuntimeStatusRow(
+                        title: "Final ASR Model",
+                        isReady: installationStatus.finalASRModelReady,
+                        readyText: "Model ready",
+                        missingText: "Run installer"
+                    )
+                    RuntimeStatusRow(
+                        title: "Streaming ASR",
+                        isReady: installationStatus.fastASREnvironmentReady,
+                        readyText: "Environment ready",
+                        missingText: "Run installer"
+                    )
+                    RuntimeStatusRow(
+                        title: "Streaming Model",
+                        isReady: installationStatus.fastASRModelReady,
+                        readyText: "Model ready",
+                        missingText: "Run installer"
+                    )
+                }
+
                 SectionCard(title: "Diagnostics", subtitle: "Helpful for support or debugging.") {
                     InfoRow(
                         title: "App Path",
@@ -479,8 +518,11 @@ struct PermissionsPanelView: View {
                         Button("Refresh Status") {
                             refreshStatuses()
                         }
+                        Button("Open Logs") {
+                            NSWorkspace.shared.open(SidecarLauncher.shared.logsDirectoryURL())
+                        }
                         Spacer()
-                        if allPermissionsGranted {
+                        if allPermissionsGranted && installationStatus.isReady {
                             Text("All set")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -531,6 +573,7 @@ struct PermissionsPanelView: View {
         inputMonitoringAllowed = Permissions.hasInputMonitoring()
         microphoneAllowed = Permissions.hasMicrophoneAccess()
         microphoneStatus = Permissions.microphoneStatusLabel()
+        installationStatus = SidecarLauncher.shared.installationStatus()
     }
 
     private func openAccessibilitySettings() {
@@ -559,6 +602,28 @@ struct PermissionsPanelView: View {
         }
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") else { return }
         NSWorkspace.shared.open(url)
+    }
+}
+
+struct RuntimeStatusRow: View {
+    let title: String
+    let isReady: Bool
+    let readyText: String
+    let missingText: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .font(.headline)
+            Spacer()
+            Text(isReady ? readyText : missingText)
+                .font(.caption)
+                .foregroundColor(isReady ? .green : .orange)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background((isReady ? Color.green : Color.orange).opacity(0.12))
+                .clipShape(Capsule())
+        }
     }
 }
 

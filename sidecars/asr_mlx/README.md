@@ -5,8 +5,10 @@ FastAPI wrapper around mlx-audio.
 Start:
 
 ```
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python server.py
+../../scripts/install.sh
+./.venv/bin/python server.py
 ```
+
+The installer deliberately installs `mlx-audio==0.2.10` with `--no-deps`, then
+uses `requirements.txt` for the minimal ASR dependency set. Installing the
+upstream package normally also resolves unrelated TTS and WebRTC extras.
