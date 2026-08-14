@@ -10,12 +10,6 @@ final class FnSessionController {
         case processing
     }
 
-    private enum State {
-        case idle
-        case streaming
-        case ending
-    }
-
     private let audio = AudioCaptureService()
     private let asr = ASRClient()
     private let fastASR = FastASRClient()
@@ -28,15 +22,11 @@ final class FnSessionController {
     private let minFramesForASR: AVAudioFramePosition
     private let fastSampleRate: Int = 16_000
 
-    private var state: State = .idle
-    private var isFinalProcessing = false
+    private var sessionMachine = FnSessionStateMachine(cooldownDuration: 0.2)
     private var lastFrameCount: AVAudioFramePosition = 0
     private var fastSessionID: String?
     private var fastSessionToken: UUID?
     private var fastTask: Task<Void, Never>?
-    private var focusPID: pid_t?
-    private var focusBundleID: String?
-    private var currentSessionID: UUID?
     private var selectedTextSnapshot: String?
     private var didRecordVoiceOps = false
     private var fastQueue: [Data] = []
@@ -56,37 +46,52 @@ final class FnSessionController {
         self.minFramesForASR = AVAudioFramePosition(Double(fastSampleRate) * minDuration)
     }
 
-    func startSession() async {
-        guard state == .idle else { return }
-        print("[fn_down]")
+    @discardableResult
+    func startSession() async -> Bool {
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let now = ProcessInfo.processInfo.systemUptime
+        guard let context = sessionMachine.begin(
+            targetPID: frontmost?.processIdentifier,
+            targetBundleID: frontmost?.bundleIdentifier,
+            now: now
+        ) else {
+            trace(
+                "[fn_session] start_ignored phase=\(sessionMachine.phase.rawValue) "
+                    + "cooldown_until=\(sessionMachine.cooldownUntil)"
+            )
+            return false
+        }
+
+        let sessionID = context.id
+        trace(
+            "[fn_session] id=\(shortID(sessionID)) transition=idle->starting "
+                + "target_pid=\(context.targetPID ?? -1) "
+                + "target_app=\(context.targetBundleID ?? "unknown")"
+        )
+        resetPerSessionData()
 
         let granted = await Permissions.requestMicrophoneIfNeeded()
-        guard granted else {
-            print("[fn_session] mic_denied")
-            onIndicatorChange?(.idle)
-            return
+        guard sessionMachine.isCurrent(sessionID, phase: .starting) else {
+            trace("[fn_session] id=\(shortID(sessionID)) startup_stale stage=permission")
+            return false
         }
-        currentSessionID = UUID()
-        let selection = await selectionCapture.captureSelection()
+        guard granted else {
+            trace("[fn_session] id=\(shortID(sessionID)) mic_denied")
+            finishSession(sessionID: sessionID)
+            return false
+        }
+
+        // AX is used only to capture optional selection context for history and
+        // LLM routing. It is never used as the final text delivery path.
+        let selection = await selectionCapture.captureSelection(mode: .axOnly)
+        guard sessionMachine.isCurrent(sessionID, phase: .starting) else {
+            trace("[fn_session] id=\(shortID(sessionID)) startup_stale stage=selection")
+            return false
+        }
         selectedTextSnapshot = selection.text
         Task { [weak self] in
             await self?.llmRouter.warmUp()
         }
-
-        lastFrameCount = 0
-        fastSessionID = nil
-        fastSessionToken = nil
-        fastTask?.cancel()
-        fastTask = nil
-        let frontmost = NSWorkspace.shared.frontmostApplication
-        focusPID = frontmost?.processIdentifier
-        focusBundleID = frontmost?.bundleIdentifier
-        didRecordVoiceOps = false
-        fastQueue = []
-        fastProcessing = false
-        fastAccumulated = Data()
-        lastPartialTimestamp = nil
-        lastPreviewText = ""
 
         do {
             try audio.start(
@@ -98,85 +103,127 @@ final class FnSessionController {
                 storeBuffers: true,
                 writeToFile: false
             )
-            state = .streaming
+        } catch {
+            trace("[fn_session] id=\(shortID(sessionID)) audio_start_failed error=\(error)")
+            finishSession(sessionID: sessionID)
+            return false
+        }
+
+        guard let shouldStopImmediately = sessionMachine.recordingDidStart(
+            sessionID: sessionID
+        ) else {
+            audio.cancel()
+            trace("[fn_session] id=\(shortID(sessionID)) audio_started_for_stale_session")
+            return false
+        }
+
+        if shouldStopImmediately {
+            trace(
+                "[fn_session] id=\(shortID(sessionID)) "
+                    + "transition=starting->processing pending_stop=true"
+            )
+            stopListening(sessionID: sessionID)
+        } else {
+            trace("[fn_session] id=\(shortID(sessionID)) transition=starting->listening")
             onIndicatorChange?(.recording)
             fastSessionToken = UUID()
             Task { [weak self] in
-                await self?.startFastSession()
+                await self?.startFastSession(for: sessionID)
             }
-        } catch {
-            state = .idle
-            print("[fn_session] audio_start_failed \(error)")
-            onIndicatorChange?(.idle)
         }
+        return true
     }
 
     func endSession() {
-        guard state == .streaming else { return }
-        print("[fn_up]")
-        state = .ending
+        switch sessionMachine.requestStop() {
+        case .ignored:
+            trace("[fn_session] stop_ignored phase=\(sessionMachine.phase.rawValue)")
+        case .deferred(let sessionID):
+            trace("[fn_session] id=\(shortID(sessionID)) stop_deferred phase=starting")
+        case .stopListening(let sessionID):
+            trace("[fn_session] id=\(shortID(sessionID)) transition=listening->processing")
+            stopListening(sessionID: sessionID)
+        }
+    }
+
+    private func stopListening(sessionID: UUID) {
+        guard sessionMachine.isCurrent(sessionID, phase: .processing) else { return }
         onIndicatorChange?(.processing)
         stopFastSession()
 
         do {
             let (wavData, totalFrames) = try audio.stopAndGetWavData()
             let frameCount = max(lastFrameCount, totalFrames)
-            if frameCount < minFramesForASR {
-                print("[asr_request_end] empty")
-                finishSession()
+            guard frameCount >= minFramesForASR else {
+                trace(
+                    "[asr_request_end] id=\(shortID(sessionID)) "
+                        + "empty frames=\(frameCount)"
+                )
+                finishSession(sessionID: sessionID)
                 return
             }
             Task { @MainActor [weak self] in
-                await self?.runFinalASR(wavData: wavData)
+                await self?.runFinalASR(wavData: wavData, sessionID: sessionID)
             }
         } catch {
-            print("[fn_session] audio_stop_failed \(error)")
-            finishSession()
-            return
+            trace(
+                "[fn_session] id=\(shortID(sessionID)) "
+                    + "audio_stop_failed error=\(error)"
+            )
+            finishSession(sessionID: sessionID)
         }
     }
 
-    private func runFinalASR(wavData: Data) async {
-        guard !isFinalProcessing else { return }
-        isFinalProcessing = true
+    private func runFinalASR(wavData: Data, sessionID: UUID) async {
+        guard sessionMachine.isCurrent(sessionID, phase: .processing) else { return }
         let totalStart = CFAbsoluteTimeGetCurrent()
-        let sessionID = currentSessionID
-        defer {
-            isFinalProcessing = false
-            finishSession()
-        }
+        defer { finishSession(sessionID: sessionID) }
 
-        print("[asr_request_start]")
+        trace("[asr_request_start] id=\(shortID(sessionID))")
         do {
             let asrStart = CFAbsoluteTimeGetCurrent()
             let text = try await asr.transcribe(wavData: wavData)
             let asrMs = Int((CFAbsoluteTimeGetCurrent() - asrStart) * 1000)
-            print("[asr_request_end] len=\(text.count)")
-
+            guard sessionMachine.isCurrent(sessionID, phase: .processing) else {
+                trace("[asr_request_end] id=\(shortID(sessionID)) stale=true")
+                return
+            }
+            trace("[asr_request_end] id=\(shortID(sessionID)) len=\(text.count)")
             guard !text.isEmpty else { return }
+
             let llmStart = CFAbsoluteTimeGetCurrent()
             let routed = await llmRouter.route(text: text)
             let llmMs = Int((CFAbsoluteTimeGetCurrent() - llmStart) * 1000)
+            guard sessionMachine.isCurrent(sessionID, phase: .processing) else {
+                trace("[llm_result] id=\(shortID(sessionID)) stale=true")
+                return
+            }
+
             let finalText = routed.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !finalText.isEmpty else { return }
+            guard !finalText.isEmpty,
+                  let context = sessionMachine.context(for: sessionID),
+                  sessionMachine.claimInsertion(sessionID: sessionID) else {
+                trace("[inject_claim] id=\(shortID(sessionID)) claimed=false")
+                return
+            }
+            trace("[fn_session] id=\(shortID(sessionID)) transition=processing->inserting")
+
             let injectStart = CFAbsoluteTimeGetCurrent()
-            let currentPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-            let didInject: Bool
-            if let focusPID, focusPID == currentPID {
-                didInject = injector.inject(finalText, restoreClipboard: false)
-            } else {
-                didInject = false
-                print("[inject_skip] focus_mismatch expected=\(focusPID ?? -1) current=\(currentPID ?? -1)")
-            }
+            let result = await injector.deliver(
+                finalText,
+                targetPID: context.targetPID,
+                restoreClipboard: true,
+                sessionGuard: { [weak self] in
+                    self?.sessionMachine.isCurrent(sessionID, phase: .inserting) == true
+                }
+            )
             let injectMs = Int((CFAbsoluteTimeGetCurrent() - injectStart) * 1000)
-            print("[inject_called] ok=\(didInject)")
-            let totalMs = Int((CFAbsoluteTimeGetCurrent() - totalStart) * 1000)
-            print("[perf] asr=\(asrMs)ms llm=\(llmMs)ms inject=\(injectMs)ms total=\(totalMs)ms")
-            if !didInject, let focusPID, currentPID == focusPID {
-                let fallback = injector.inject(text, restoreClipboard: false)
-                print("[inject_fallback] ok=\(fallback)")
-            }
-            if let sessionID, !didRecordVoiceOps {
+            trace(
+                "[inject_result] id=\(shortID(sessionID)) "
+                    + "status=\(result.status.rawValue)"
+            )
+
+            if !didRecordVoiceOps {
                 let llmUsed = routed.offlineUsed ? "offline" : "none"
                 ClipboardStore.shared.recordVoiceOpsText(
                     sessionID: sessionID,
@@ -184,25 +231,42 @@ final class FnSessionController {
                     selectedText: selectedTextSnapshot,
                     voiceIntent: text,
                     llmUsed: llmUsed,
-                    appBundleID: focusBundleID
+                    appBundleID: context.targetBundleID
                 )
                 didRecordVoiceOps = true
             }
+
+            let totalMs = Int((CFAbsoluteTimeGetCurrent() - totalStart) * 1000)
+            trace(
+                "[perf] id=\(shortID(sessionID)) asr=\(asrMs)ms "
+                    + "llm=\(llmMs)ms inject=\(injectMs)ms total=\(totalMs)ms"
+            )
         } catch {
-            print("[asr_request_end] error=\(error)")
+            trace("[asr_request_end] id=\(shortID(sessionID)) error=\(error)")
         }
     }
 
-    private func finishSession() {
+    private func finishSession(sessionID: UUID) {
+        guard sessionMachine.complete(
+            sessionID: sessionID,
+            now: ProcessInfo.processInfo.systemUptime
+        ) else {
+            return
+        }
+
         audio.resetStreamingState()
+        stopFastSession()
+        resetPerSessionData()
+        onIndicatorChange?(.idle)
+        trace("[fn_session] id=\(shortID(sessionID)) transition=finished->idle")
+    }
+
+    private func resetPerSessionData() {
         lastFrameCount = 0
         fastSessionID = nil
         fastSessionToken = nil
         fastTask?.cancel()
         fastTask = nil
-        focusPID = nil
-        focusBundleID = nil
-        currentSessionID = nil
         selectedTextSnapshot = nil
         didRecordVoiceOps = false
         fastQueue = []
@@ -210,18 +274,22 @@ final class FnSessionController {
         fastAccumulated = Data()
         lastPartialTimestamp = nil
         lastPreviewText = ""
-        state = .idle
-        onIndicatorChange?(.idle)
-        print("[fn_session] ended")
     }
 
-    private func startFastSession() async {
+    private func startFastSession(for voiceSessionID: UUID) async {
+        let token = fastSessionToken
         do {
             let sessionID = try await fastASR.startSession()
+            guard sessionMachine.isCurrent(voiceSessionID, phase: .listening),
+                  token != nil,
+                  token == fastSessionToken else {
+                _ = try? await fastASR.endSession(sessionID: sessionID)
+                return
+            }
             fastSessionID = sessionID
-            drainFastQueueIfNeeded()
+            drainFastQueueIfNeeded(for: voiceSessionID)
         } catch {
-            print("[fast_asr_start_failed] \(error)")
+            trace("[fast_asr_start_failed] id=\(shortID(voiceSessionID)) error=\(error)")
         }
     }
 
@@ -242,41 +310,41 @@ final class FnSessionController {
     }
 
     private func handleFastChunk(data: Data, frames: AVAudioFrameCount) {
-        guard state == .streaming, fastSessionToken != nil else { return }
-        guard !data.isEmpty else { return }
+        guard let sessionID = sessionMachine.currentContext?.id,
+              sessionMachine.isCurrent(sessionID, phase: .listening),
+              fastSessionToken != nil,
+              !data.isEmpty else {
+            return
+        }
+
         lastFrameCount += AVAudioFramePosition(frames)
         fastAccumulated.append(data)
         while fastAccumulated.count >= fastChunkBytes {
             let chunk = Data(fastAccumulated.prefix(fastChunkBytes))
             fastAccumulated.removeSubrange(0..<fastChunkBytes)
-            enqueueFastChunk(chunk)
+            fastQueue.append(chunk)
         }
+        drainFastQueueIfNeeded(for: sessionID)
     }
 
-    private func enqueueFastChunk(_ data: Data) {
-        fastQueue.append(data)
-        drainFastQueueIfNeeded()
-    }
-
-    private func drainFastQueueIfNeeded() {
+    private func drainFastQueueIfNeeded(for voiceSessionID: UUID) {
         guard !fastProcessing else { return }
         fastProcessing = true
         fastTask = Task { @MainActor [weak self] in
-            await self?.processFastQueue()
+            await self?.processFastQueue(for: voiceSessionID)
         }
     }
 
-    private func processFastQueue() async {
+    private func processFastQueue(for voiceSessionID: UUID) async {
         let token = fastSessionToken
-        while state == .streaming {
-            if token == nil || token != fastSessionToken {
-                break
-            }
+        while sessionMachine.isCurrent(voiceSessionID, phase: .listening) {
+            guard token != nil, token == fastSessionToken else { break }
             guard let sessionID = fastSessionID else {
                 try? await Task.sleep(nanoseconds: 30_000_000)
                 continue
             }
             guard !fastQueue.isEmpty else { break }
+
             let chunk = fastQueue.removeFirst()
             let started = CFAbsoluteTimeGetCurrent()
             do {
@@ -285,32 +353,46 @@ final class FnSessionController {
                     samples: chunk,
                     sampleRate: fastSampleRate
                 )
-                if state != .streaming || token != fastSessionToken {
+                guard sessionMachine.isCurrent(voiceSessionID, phase: .listening),
+                      token == fastSessionToken else {
                     break
                 }
+
                 let now = CFAbsoluteTimeGetCurrent()
                 if let last = lastPartialTimestamp {
-                    let updateMs = Int((now - last) * 1000)
-                    print("[update_rate] \(updateMs)ms")
+                    trace(
+                        "[update_rate] id=\(shortID(voiceSessionID)) "
+                            + "ms=\(Int((now - last) * 1000))"
+                    )
                 }
                 lastPartialTimestamp = now
-                print("[partial_len] \(text.count)")
 
+                // Fast ASR owns preview only. It has no reference to an
+                // injector, so partial results cannot mutate the target app.
                 if text != lastPreviewText {
                     lastPreviewText = text
                     onPreviewText?(text)
                 }
+
                 let elapsedMs = Int((now - started) * 1000)
-                if let latency {
-                    print("[fast_asr_latency] server=\(latency)ms push=\(elapsedMs)ms")
-                } else {
-                    print("[fast_asr_latency] push=\(elapsedMs)ms")
-                }
+                trace(
+                    "[fast_asr_latency] id=\(shortID(voiceSessionID)) "
+                        + "server=\(latency.map(String.init) ?? "unknown")ms "
+                        + "push=\(elapsedMs)ms"
+                )
             } catch {
-                print("[fast_asr_error] \(error)")
+                trace("[fast_asr_error] id=\(shortID(voiceSessionID)) error=\(error)")
             }
         }
         fastProcessing = false
         fastTask = nil
+    }
+
+    private func shortID(_ id: UUID) -> String {
+        String(id.uuidString.prefix(8))
+    }
+
+    private func trace(_ message: String) {
+        NSLog("%@", message)
     }
 }

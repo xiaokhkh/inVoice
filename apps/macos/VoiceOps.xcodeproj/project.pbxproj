@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AB1000000000000000000001 /* FnSessionStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000001 /* FnSessionStateMachine.swift */; };
+		AB1000000000000000000002 /* PasteboardTransaction.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000002 /* PasteboardTransaction.swift */; };
+		AB1000000000000000000003 /* PasteShortcutPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000003 /* PasteShortcutPlan.swift */; };
 		B1B2C3D4E5F6010203040506 /* ClipboardItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010203040506 /* ClipboardItem.swift */; };
 		B1B2C3D4E5F6010203040507 /* ClipboardStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010203040507 /* ClipboardStore.swift */; };
 		B1B2C3D4E5F6010203040508 /* ClipboardObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010203040508 /* ClipboardObserver.swift */; };
@@ -43,6 +46,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		AA1000000000000000000001 /* FnSessionStateMachine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FnSessionStateMachine.swift; sourceTree = "<group>"; };
+		AA1000000000000000000002 /* PasteboardTransaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteboardTransaction.swift; sourceTree = "<group>"; };
+		AA1000000000000000000003 /* PasteShortcutPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteShortcutPlan.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6010203040506 /* ClipboardItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardItem.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6010203040507 /* ClipboardStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardStore.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6010203040508 /* ClipboardObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardObserver.swift; sourceTree = "<group>"; };
@@ -81,6 +87,16 @@
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
+		AC1000000000000000000001 /* VoiceOpsCore */ = {
+			isa = PBXGroup;
+			children = (
+				AA1000000000000000000001 /* FnSessionStateMachine.swift */,
+				AA1000000000000000000002 /* PasteboardTransaction.swift */,
+				AA1000000000000000000003 /* PasteShortcutPlan.swift */,
+			);
+			path = VoiceOpsCore;
+			sourceTree = "<group>";
+		};
 		24C913E323C83618A6919A02 /* Pipeline */ = {
 			isa = PBXGroup;
 			children = (
@@ -130,6 +146,7 @@
 			isa = PBXGroup;
 			children = (
 				697837329334FEE89260229F /* VoiceOps */,
+				AC1000000000000000000001 /* VoiceOpsCore */,
 				F7A3F9039055922248A1D262 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -243,6 +260,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AB1000000000000000000001 /* FnSessionStateMachine.swift in Sources */,
+				AB1000000000000000000002 /* PasteboardTransaction.swift in Sources */,
+				AB1000000000000000000003 /* PasteShortcutPlan.swift in Sources */,
 				25F70221A7BF9CB7E37CA200 /* ASRClient.swift in Sources */,
 				BA4E2F22B05DD2EC0DBBA13F /* AppMain.swift in Sources */,
 				D3440F588CEFA153F4AA21E8 /* AudioCaptureService.swift in Sources */,

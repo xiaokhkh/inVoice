@@ -1,297 +1,283 @@
-import Cocoa
+import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
+import ImageIO
 
+@MainActor
 final class FocusInjector {
-    struct FocusTarget {
-        let element: AXUIElement
+    enum DeliveryStatus: String, Sendable {
+        case inserted
+        case copiedFocusChanged
+        case copiedNoPermission
+        case copiedSessionSuperseded
+        case copiedEventFailure
+        case failedClipboardWrite
+
+        var didPostPaste: Bool {
+            self == .inserted
+        }
     }
 
-    private struct FocusSnapshot {
-        let element: AXUIElement
-        let value: String
-        let range: CFRange?
+    struct DeliveryResult: Sendable {
+        let status: DeliveryStatus
     }
 
-    func captureFocusTarget() -> FocusTarget? {
-        let system = AXUIElementCreateSystemWide()
-        var focused: AnyObject?
-        let focusStatus = AXUIElementCopyAttributeValue(
-            system,
-            kAXFocusedUIElementAttribute as CFString,
-            &focused
-        )
-        guard focusStatus == .success, let focused else { return nil }
-        guard CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
-        return FocusTarget(element: focused as! AXUIElement)
+    private let clipboard: PasteboardTransaction
+    private let accessibilityGranted: () -> Bool
+    private let frontmostPID: () -> pid_t?
+    private let pasteEventPoster: (CGKeyCode) -> Bool
+
+    init(
+        clipboard: PasteboardTransaction? = nil,
+        accessibilityGranted: @escaping () -> Bool = { Permissions.hasAccessibility() },
+        frontmostPID: @escaping () -> pid_t? = {
+            NSWorkspace.shared.frontmostApplication?.processIdentifier
+        },
+        pasteEventPoster: ((CGKeyCode) -> Bool)? = nil
+    ) {
+        if let clipboard {
+            self.clipboard = clipboard
+        } else {
+            self.clipboard = PasteboardTransaction.shared
+            PasteboardTransaction.shared.setInternalWriteMarker { duration in
+                ClipboardObserver.shared.markInternalWrite(duration: duration)
+            }
+        }
+        self.accessibilityGranted = accessibilityGranted
+        self.frontmostPID = frontmostPID
+        self.pasteEventPoster = pasteEventPoster ?? Self.postPasteEvent
     }
 
-    func inject(_ text: String, target: FocusTarget? = nil, restoreClipboard: Bool = false) -> Bool {
-        guard !text.isEmpty else { return true }
-
-        guard Permissions.hasAccessibility() else {
-            print("[inject] access_denied \(Permissions.accessibilityStatus())")
-            return false
+    /// Delivers one final transcript. Every failure after a successful
+    /// pasteboard write becomes copy-only; this method never attempts AX text
+    /// mutation or Unicode typing after Cmd+V may have been posted.
+    func deliver(
+        _ text: String,
+        targetPID: pid_t?,
+        restoreClipboard: Bool = true,
+        sessionGuard: @escaping @MainActor () -> Bool = { true }
+    ) async -> DeliveryResult {
+        guard !text.isEmpty else {
+            return DeliveryResult(status: .failedClipboardWrite)
         }
 
-        if let target {
-            guard let snapshot = snapshot(for: target) else {
-                print("[inject] target_snapshot_failed")
-                return false
-            }
-            let didInsert = insertViaAX(text: text, snapshot: snapshot)
-            if !didInsert {
-                print("[inject] target_ax_failed")
-            }
-            return didInsert
+        await clipboard.acquireDeliverySlot()
+        defer { clipboard.releaseDeliverySlot() }
+
+        guard sessionGuard() else {
+            return copyOnly(text, status: .copiedSessionSuperseded)
         }
 
-        ClipboardObserver.shared.markInternalWrite()
-        let pb = NSPasteboard.general
-        let backup = restoreClipboard ? (pb.pasteboardItems ?? []) : []
-        pb.clearContents()
-        let didSet = pb.setString(text, forType: .string)
-        if !didSet {
-            print("[inject] pasteboard_set_failed")
+        guard accessibilityGranted() else {
+            trace("[inject] copied reason=no_permission")
+            return copyOnly(text, status: .copiedNoPermission)
         }
 
-        let snapshot = snapshotForCurrentFocus()
-        if !postPasteEvent() {
-            print("[inject] event_post_failed")
-            return fallbackInsert(text: text, snapshot: snapshot)
+        guard targetStillMatches(targetPID) else {
+            trace(
+                "[inject] copied reason=focus_changed expected=\(targetPID ?? -1) "
+                    + "current=\(frontmostPID() ?? -1)"
+            )
+            return copyOnly(text, status: .copiedFocusChanged)
         }
 
-        if let snapshot {
-            if verifyPasteApplied(text: text, snapshot: snapshot) {
-                return true
-            }
-            if insertViaAX(text: text, snapshot: snapshot) {
-                return true
-            }
+        guard var prepared = clipboard.prepareTextForPaste(text) else {
+            trace("[inject] failed reason=clipboard_write")
+            return DeliveryResult(status: .failedClipboardWrite)
+        }
+
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        guard sessionGuard() else {
+            clipboard.abandonRestoreKeepingCurrentClipboard()
+            trace("[inject] copied reason=session_superseded")
+            return DeliveryResult(status: .copiedSessionSuperseded)
+        }
+
+        guard targetStillMatches(targetPID) else {
+            clipboard.abandonRestoreKeepingCurrentClipboard()
+            trace(
+                "[inject] copied reason=focus_changed_before_post expected=\(targetPID ?? -1) "
+                    + "current=\(frontmostPID() ?? -1)"
+            )
+            return DeliveryResult(status: .copiedFocusChanged)
+        }
+
+        guard let refreshed = clipboard.reassertTextIfNeeded(text, prepared: prepared) else {
+            trace("[inject] failed reason=clipboard_reassert")
+            return DeliveryResult(status: .failedClipboardWrite)
+        }
+        prepared = refreshed
+
+        let vKeyCode = Self.keyCode(forCharacter: "v") ?? CGKeyCode(kVK_ANSI_V)
+        guard pasteEventPoster(vKeyCode) else {
+            clipboard.abandonRestoreKeepingCurrentClipboard()
+            trace("[inject] copied reason=event_creation keycode=\(vKeyCode)")
+            return DeliveryResult(status: .copiedEventFailure)
         }
 
         if restoreClipboard {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                pb.clearContents()
-                for item in backup { pb.writeObjects([item]) }
-            }
+            clipboard.scheduleRestore(after: prepared)
+        } else {
+            clipboard.abandonRestoreKeepingCurrentClipboard()
         }
 
-        return true
+        trace(
+            "[inject] delivered status=inserted target_pid=\(targetPID ?? -1) "
+                + "keycode=\(vKeyCode) restore=\(restoreClipboard)"
+        )
+        return DeliveryResult(status: .inserted)
     }
 
-    func injectImageData(_ data: Data, restoreClipboard: Bool = false, originalPath: String? = nil) -> Bool {
-        guard !data.isEmpty else { return true }
-        guard Permissions.hasAccessibility() else {
-            print("[inject] access_denied \(Permissions.accessibilityStatus())")
-            return false
-        }
+    func injectImageData(
+        _ data: Data,
+        restoreClipboard: Bool = false,
+        originalPath: String? = nil
+    ) -> Bool {
+        guard !data.isEmpty, accessibilityGranted() else { return false }
 
-        ClipboardObserver.shared.markInternalWrite()
-        let pb = NSPasteboard.general
-        let backup = restoreClipboard ? (pb.pasteboardItems ?? []) : []
-        pb.clearContents()
+        let pasteboard = NSPasteboard.general
+        let backup = restoreClipboard ? deepCopyItems(pasteboard.pasteboardItems ?? []) : []
+        ClipboardObserver.shared.markInternalWrite(duration: 1.0)
+        pasteboard.clearContents()
+
         if let originalPath {
             let url = URL(fileURLWithPath: originalPath)
             if FileManager.default.fileExists(atPath: url.path) {
-                pb.writeObjects([url as NSURL])
+                pasteboard.writeObjects([url as NSURL])
             }
         }
+
         var didSet = false
         if let image = decodedImage(from: data) {
-            pb.writeObjects([image])
-            didSet = true
+            didSet = pasteboard.writeObjects([image])
             if let tiff = image.tiffRepresentation {
-                _ = pb.setData(tiff, forType: .tiff)
+                _ = pasteboard.setData(tiff, forType: .tiff)
             }
-            _ = pb.setData(data, forType: .png)
+            _ = pasteboard.setData(data, forType: .png)
         } else {
-            didSet = pb.setData(data, forType: .png)
+            didSet = pasteboard.setData(data, forType: .png)
         }
-        if !didSet {
-            print("[inject] pasteboard_set_failed")
-        }
+        guard didSet else { return false }
 
-        if !postPasteEvent() {
-            print("[inject] event_post_failed")
-            return false
-        }
+        let vKeyCode = Self.keyCode(forCharacter: "v") ?? CGKeyCode(kVK_ANSI_V)
+        guard pasteEventPoster(vKeyCode) else { return false }
 
         if restoreClipboard {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                pb.clearContents()
-                for item in backup { pb.writeObjects([item]) }
-            }
-        }
-
-        return true
-    }
-
-    private func fallbackInsert(text: String, snapshot: FocusSnapshot?) -> Bool {
-        if let snapshot, insertViaAX(text: text, snapshot: snapshot) {
-            return true
-        }
-        return insertViaTyping(text)
-    }
-
-    private func snapshotForCurrentFocus() -> FocusSnapshot? {
-        let system = AXUIElementCreateSystemWide()
-        var focused: AnyObject?
-        let focusStatus = AXUIElementCopyAttributeValue(
-            system,
-            kAXFocusedUIElementAttribute as CFString,
-            &focused
-        )
-        guard focusStatus == .success, let focused else { return nil }
-        guard CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
-        let element = focused as! AXUIElement
-
-        var valueObj: AnyObject?
-        let valueStatus = AXUIElementCopyAttributeValue(
-            element,
-            kAXValueAttribute as CFString,
-            &valueObj
-        )
-        guard valueStatus == .success, let value = valueObj as? String else { return nil }
-
-        var rangeObj: AnyObject?
-        let rangeStatus = AXUIElementCopyAttributeValue(
-            element,
-            kAXSelectedTextRangeAttribute as CFString,
-            &rangeObj
-        )
-        var range: CFRange?
-        if rangeStatus == .success, let rangeObj {
-            if CFGetTypeID(rangeObj) == AXValueGetTypeID() {
-                let axValue = rangeObj as! AXValue
-                var cfRange = CFRange()
-                if AXValueGetValue(axValue, .cfRange, &cfRange) {
-                    range = cfRange
+            let expectedChangeCount = pasteboard.changeCount
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
+                guard pasteboard.changeCount == expectedChangeCount else { return }
+                ClipboardObserver.shared.markInternalWrite()
+                pasteboard.clearContents()
+                if !backup.isEmpty {
+                    pasteboard.writeObjects(backup)
                 }
-            }
-        }
-
-        return FocusSnapshot(element: element, value: value, range: range)
-    }
-
-    private func snapshot(for target: FocusTarget) -> FocusSnapshot? {
-        var valueObj: AnyObject?
-        let valueStatus = AXUIElementCopyAttributeValue(
-            target.element,
-            kAXValueAttribute as CFString,
-            &valueObj
-        )
-        guard valueStatus == .success, let value = valueObj as? String else { return nil }
-
-        var rangeObj: AnyObject?
-        let rangeStatus = AXUIElementCopyAttributeValue(
-            target.element,
-            kAXSelectedTextRangeAttribute as CFString,
-            &rangeObj
-        )
-        var range: CFRange?
-        if rangeStatus == .success, let rangeObj {
-            if CFGetTypeID(rangeObj) == AXValueGetTypeID() {
-                let axValue = rangeObj as! AXValue
-                var cfRange = CFRange()
-                if AXValueGetValue(axValue, .cfRange, &cfRange) {
-                    range = cfRange
-                }
-            }
-        }
-
-        return FocusSnapshot(element: target.element, value: value, range: range)
-    }
-
-    private func verifyPasteApplied(text: String, snapshot: FocusSnapshot) -> Bool {
-        guard let expected = expectedValue(text: text, snapshot: snapshot) else { return false }
-        usleep(60_000)
-        var valueObj: AnyObject?
-        let status = AXUIElementCopyAttributeValue(
-            snapshot.element,
-            kAXValueAttribute as CFString,
-            &valueObj
-        )
-        guard status == .success, let value = valueObj as? String else { return false }
-        return value == expected
-    }
-
-    private func insertViaAX(text: String, snapshot: FocusSnapshot) -> Bool {
-        guard let expected = expectedValue(text: text, snapshot: snapshot) else { return false }
-        let setStatus = AXUIElementSetAttributeValue(
-            snapshot.element,
-            kAXValueAttribute as CFString,
-            expected as CFTypeRef
-        )
-        guard setStatus == .success else { return false }
-
-        if var range = snapshot.range {
-            range.location += text.count
-            range.length = 0
-            if let axRange = AXValueCreate(.cfRange, &range) {
-                _ = AXUIElementSetAttributeValue(
-                    snapshot.element,
-                    kAXSelectedTextRangeAttribute as CFString,
-                    axRange
-                )
             }
         }
         return true
     }
 
-    private func expectedValue(text: String, snapshot: FocusSnapshot) -> String? {
-        guard let range = snapshot.range else { return nil }
-        let nsValue = snapshot.value as NSString
-        let nsRange = NSRange(location: range.location, length: range.length)
-        return nsValue.replacingCharacters(in: nsRange, with: text)
+    private func targetStillMatches(_ targetPID: pid_t?) -> Bool {
+        guard let targetPID, targetPID > 0 else { return false }
+        return frontmostPID() == targetPID
     }
 
-    private func insertViaTyping(_ text: String) -> Bool {
-        let src = CGEventSource(stateID: .combinedSessionState)
-        let chars = Array(text.utf16)
-
-        var didPost = false
-        chars.withUnsafeBufferPointer { ptr in
-            guard let base = ptr.baseAddress else { return }
-            if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true),
-               let keyUp = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false) {
-                keyDown.keyboardSetUnicodeString(stringLength: chars.count, unicodeString: base)
-                keyUp.keyboardSetUnicodeString(stringLength: chars.count, unicodeString: base)
-                keyDown.post(tap: .cghidEventTap)
-                keyUp.post(tap: .cghidEventTap)
-                didPost = true
-            }
-        }
-        if !didPost {
-            print("[inject] typing_failed")
-        }
-        return didPost
+    private func copyOnly(_ text: String, status: DeliveryStatus) -> DeliveryResult {
+        let didWrite = clipboard.copyOnly(text)
+        return DeliveryResult(status: didWrite ? status : .failedClipboardWrite)
     }
 
-    private func postPasteEvent() -> Bool {
-        usleep(25_000)
-        guard let src = CGEventSource(stateID: .combinedSessionState) else {
-            print("[inject] event_source_failed")
+    private static func postPasteEvent(vKeyCode: CGKeyCode) -> Bool {
+        guard let source = CGEventSource(stateID: .privateState) else {
             return false
         }
-        let cmdKey: CGKeyCode = 55 // Left Command
-        let vKey: CGKeyCode = 9 // US layout 'v'
 
-        func post(_ key: CGKeyCode, down: Bool, flags: CGEventFlags) -> Bool {
-            guard let event = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: down) else {
+        let descriptors = PasteShortcutPlan.events(vKeyCode: vKeyCode)
+        var events: [CGEvent] = []
+        for descriptor in descriptors {
+            guard let event = CGEvent(
+                keyboardEventSource: source,
+                virtualKey: descriptor.keyCode,
+                keyDown: descriptor.isKeyDown
+            ) else {
                 return false
             }
-            event.flags = flags
-            event.post(tap: .cghidEventTap)
-            return true
+            event.flags = descriptor.usesCommand ? [.maskCommand] : []
+            events.append(event)
         }
 
-        let cmdDown = post(cmdKey, down: true, flags: [.maskCommand])
-        let vDown = post(vKey, down: true, flags: [.maskCommand])
-        let vUp = post(vKey, down: false, flags: [.maskCommand])
-        let cmdUp = post(cmdKey, down: false, flags: [])
-        return cmdDown && vDown && vUp && cmdUp
+        guard events.count == 2 else { return false }
+        for event in events {
+            event.post(tap: .cgSessionEventTap)
+        }
+        return true
     }
 
+    /// Finds the physical key that produces `character` on the active
+    /// ASCII-capable layout. This keeps Cmd+V working on Dvorak, Colemak and
+    /// other non-QWERTY layouts.
+    private static func keyCode(forCharacter character: Character) -> CGKeyCode? {
+        let inputSource: TISInputSource? = {
+            if let source = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?
+                .takeRetainedValue() {
+                return source
+            }
+            return TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue()
+        }()
+        guard let inputSource,
+              let rawLayout = TISGetInputSourceProperty(
+                inputSource,
+                kTISPropertyUnicodeKeyLayoutData
+              ) else {
+            return nil
+        }
+
+        let layoutData = Unmanaged<CFData>
+            .fromOpaque(rawLayout)
+            .takeUnretainedValue() as Data
+        let target = String(character)
+
+        return layoutData.withUnsafeBytes { rawBuffer -> CGKeyCode? in
+            guard let baseAddress = rawBuffer.baseAddress else { return nil }
+            let layout = baseAddress.assumingMemoryBound(to: UCKeyboardLayout.self)
+            let maxLength = 4
+            var unicode = [UniChar](repeating: 0, count: maxLength)
+
+            for candidate in 0..<128 {
+                var deadKeyState: UInt32 = 0
+                var actualLength = 0
+                let status = UCKeyTranslate(
+                    layout,
+                    UInt16(candidate),
+                    UInt16(kUCKeyActionDisplay),
+                    0,
+                    UInt32(LMGetKbdType()),
+                    OptionBits(kUCKeyTranslateNoDeadKeysBit),
+                    &deadKeyState,
+                    maxLength,
+                    &actualLength,
+                    &unicode
+                )
+                guard status == noErr, actualLength > 0 else { continue }
+                if String(utf16CodeUnits: unicode, count: actualLength) == target {
+                    return CGKeyCode(candidate)
+                }
+            }
+            return nil
+        }
+    }
+
+    private func deepCopyItems(_ items: [NSPasteboardItem]) -> [NSPasteboardItem] {
+        items.map { item in
+            let copy = NSPasteboardItem()
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    copy.setData(data, forType: type)
+                }
+            }
+            return copy
+        }
+    }
 
     private func decodedImage(from data: Data) -> NSImage? {
         if let image = NSImage(data: data) {
@@ -302,5 +288,9 @@ final class FocusInjector {
             return NSImage(cgImage: cgImage, size: .zero)
         }
         return nil
+    }
+
+    private func trace(_ message: String) {
+        NSLog("%@", message)
     }
 }

@@ -13,9 +13,9 @@ final class ClipboardHistoryViewModel: ObservableObject {
     private let maxItems = 200
     private var imageMetaCache: [UUID: String] = [:]
 
-    init(store: ClipboardStore = .shared, injector: FocusInjector = FocusInjector()) {
+    init(store: ClipboardStore = .shared, injector: FocusInjector? = nil) {
         self.store = store
-        self.injector = injector
+        self.injector = injector ?? FocusInjector()
         observer = NotificationCenter.default.addObserver(
             forName: ClipboardStore.didChangeNotification,
             object: nil,
@@ -157,7 +157,14 @@ final class ClipboardHistoryViewModel: ObservableObject {
         switch item.type {
         case .text:
             guard let text = item.contentText, !text.isEmpty else { return }
-            _ = injector.inject(text, restoreClipboard: false)
+            let targetPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            Task { @MainActor [weak injector] in
+                _ = await injector?.deliver(
+                    text,
+                    targetPID: targetPID,
+                    restoreClipboard: false
+                )
+            }
         case .image:
             guard let imageData = loadImageData(for: item) else { return }
             _ = injector.injectImageData(

@@ -196,17 +196,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleFnDown() {
         guard !fnHoldActive else { return }
-        guard Permissions.hasAccessibility() else {
-            openPreferences()
-            return
-        }
         fnHoldActive = true
         clipboardPanel.hide()
         panel?.hide()
         previewModel.text = ""
         previewModel.state = .recording
         previewPanel?.show()
-        Task { await fnSession.startSession() }
+        Task { [weak self] in
+            guard let self else { return }
+            let started = await self.fnSession.startSession()
+            if !started, self.fnHoldActive {
+                self.fnHoldActive = false
+                self.previewModel.state = .idle
+                self.previewPanel?.hide()
+            }
+        }
     }
 
     private func handleFnUp() {

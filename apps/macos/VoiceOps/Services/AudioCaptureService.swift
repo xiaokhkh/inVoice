@@ -1,6 +1,11 @@
 @preconcurrency import AVFoundation
+import AudioToolbox
+import CoreAudio
 
 final class AudioCaptureService: @unchecked Sendable {
+    private static let preferredInputDeviceName = "MLX Voice Mic"
+    private static let preferredInputManufacturer = "MLX VoiceOps"
+
     private var engine = AVAudioEngine()
     private let audioQueue = DispatchQueue(label: "voiceops.audio.queue")
     private var outputURL: URL?
@@ -67,8 +72,17 @@ final class AudioCaptureService: @unchecked Sendable {
         converter = nil
 
         let input = engine.inputNode
+        selectPreferredInputDevice(for: input)
+        let hardwareFormat = input.inputFormat(forBus: 0)
+        guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0 else {
+            throw NSError(
+                domain: "AudioCaptureService",
+                code: 4,
+                userInfo: [NSLocalizedDescriptionKey: "Selected microphone has no usable input format"]
+            )
+        }
         input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 1024, format: hardwareFormat) { [weak self] buffer, _ in
             self?.handleBuffer(buffer)
         }
 
@@ -209,7 +223,7 @@ final class AudioCaptureService: @unchecked Sendable {
                 outStatus.pointee = .haveData
                 return buffer
             }
-            if status == .haveData {
+            if status == .haveData || (status == .inputRanDry && outBuffer.frameLength > 0) {
                 copy = outBuffer
             } else {
                 return
@@ -315,5 +329,130 @@ final class AudioCaptureService: @unchecked Sendable {
         } else {
             converter = nil
         }
+    }
+
+    /// Prefer the dedicated ESP32-S3 microphone while keeping the system input
+    /// as a transparent fallback when the board is disconnected.
+    private func selectPreferredInputDevice(for input: AVAudioInputNode) {
+        guard let deviceID = Self.inputDevice(named: Self.preferredInputDeviceName) else {
+            NSLog(
+                "VoiceOps: %@ is not connected; using the current system input",
+                Self.preferredInputDeviceName
+            )
+            return
+        }
+        guard let audioUnit = input.audioUnit else {
+            return
+        }
+
+        var selectedDeviceID = deviceID
+        let status = AudioUnitSetProperty(
+            audioUnit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &selectedDeviceID,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+        if status != noErr {
+            NSLog("VoiceOps: unable to select %@ (CoreAudio status %d); using the system input", Self.preferredInputDeviceName, status)
+        } else {
+            NSLog(
+                "VoiceOps: selected microphone %@ device_id=%u",
+                Self.preferredInputDeviceName,
+                selectedDeviceID
+            )
+        }
+    }
+
+    private static func inputDevice(named requestedName: String) -> AudioDeviceID? {
+        var devicesAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        let systemObject = AudioObjectID(kAudioObjectSystemObject)
+        guard AudioObjectGetPropertyDataSize(
+            systemObject,
+            &devicesAddress,
+            0,
+            nil,
+            &dataSize
+        ) == noErr else {
+            return nil
+        }
+
+        let count = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
+        var devices = [AudioDeviceID](repeating: 0, count: count)
+        let listStatus = devices.withUnsafeMutableBytes { bytes in
+            AudioObjectGetPropertyData(
+                systemObject,
+                &devicesAddress,
+                0,
+                nil,
+                &dataSize,
+                bytes.baseAddress!
+            )
+        }
+        guard listStatus == noErr else {
+            return nil
+        }
+
+        return devices.first { deviceID in
+            hasInputStreams(deviceID) && (
+                deviceName(deviceID) == requestedName ||
+                deviceManufacturer(deviceID) == preferredInputManufacturer
+            )
+        }
+    }
+
+    private static func hasInputStreams(_ deviceID: AudioDeviceID) -> Bool {
+        var streamsAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var streamsSize: UInt32 = 0
+        return AudioObjectGetPropertyDataSize(
+            deviceID,
+            &streamsAddress,
+            0,
+            nil,
+            &streamsSize
+        ) == noErr && streamsSize > 0
+    }
+
+    private static func deviceName(_ deviceID: AudioDeviceID) -> String? {
+        stringProperty(kAudioObjectPropertyName, of: deviceID)
+    }
+
+    private static func deviceManufacturer(_ deviceID: AudioDeviceID) -> String? {
+        stringProperty(kAudioObjectPropertyManufacturer, of: deviceID)
+    }
+
+    private static func stringProperty(
+        _ selector: AudioObjectPropertySelector,
+        of deviceID: AudioDeviceID
+    ) -> String? {
+        var nameAddress = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var name: Unmanaged<CFString>?
+        var nameSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(
+            deviceID,
+            &nameAddress,
+            0,
+            nil,
+            &nameSize,
+            &name
+        ) == noErr else {
+            return nil
+        }
+        guard let name else { return nil }
+        return name.takeUnretainedValue() as String
     }
 }
