@@ -37,6 +37,10 @@ pressed/released state every 250 ms. Device removal forces an immediate release
 on the host, while the periodic absolute report repairs a release lost during a
 dock suspend/resume cycle.
 
+Screen, PWR, and BOOT inputs additionally require 100 ms of continuous stable
+state before a transition is accepted. This filters short touch-controller and
+power-rail glitches without changing the hold-to-talk interaction.
+
 ## Important
 
 The dual-slot partition table deliberately keeps `assets` at `0x800000` with

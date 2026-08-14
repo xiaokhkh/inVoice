@@ -39,6 +39,7 @@ serialization.
 - Hold and release screen/PWR through the dock; verify exactly one recording Session is created and ended.
 - Suspend and resume the dock while idle; verify VoiceOps remains idle.
 - Send F13/F14 from a different keyboard; verify it cannot create a board recording or open the board clipboard panel.
+- Inject or observe an input pulse shorter than 100 ms; verify it does not emit F13/F14 or create a Session.
 - Confirm no overlay or focus change occurs during Fn hold.
 - If Accessibility is disabled, verify text is copied to clipboard and no injection occurs.
 - Release immediately during startup and confirm recording does not remain stuck.

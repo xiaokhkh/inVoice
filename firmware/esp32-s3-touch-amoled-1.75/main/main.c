@@ -14,14 +14,25 @@
 #include "usb_device_uac.h"
 
 #define PWR_BUTTON_PIN IO_EXPANDER_PIN_NUM_4
+#define INPUT_SCAN_MS 20
+#define INPUT_DEBOUNCE_MS 100
+#define INPUT_DEBOUNCE_SAMPLES \
+    ((INPUT_DEBOUNCE_MS + INPUT_SCAN_MS - 1) / INPUT_SCAN_MS)
 #define CONTROL_STATE_SYNC_MS 250
 
 static const char *TAG = "mlx_voice_mic";
 static atomic_bool s_ui_ready;
 static atomic_bool s_usb_mounted;
 static atomic_bool s_clipboard_pressed;
+static atomic_bool s_touch_pressed_raw;
 static atomic_uint s_trigger_sources;
 static SemaphoreHandle_t s_trigger_mutex;
+
+typedef struct {
+    bool stable;
+    bool candidate;
+    uint8_t candidate_samples;
+} input_debouncer_t;
 
 typedef enum {
     TRIGGER_SOURCE_TOUCH = 1U << 0,
@@ -127,7 +138,33 @@ static void sync_control_state(void)
 
 static void touch_trigger(bool pressed)
 {
-    set_trigger_source(TRIGGER_SOURCE_TOUCH, pressed, false);
+    // LVGL events are treated as raw samples. A short touch-controller glitch
+    // must not create a recording Session, especially on noisy USB power.
+    atomic_store(&s_touch_pressed_raw, pressed);
+}
+
+static bool debounce_input(input_debouncer_t *debouncer, bool raw)
+{
+    if (raw == debouncer->stable) {
+        debouncer->candidate = raw;
+        debouncer->candidate_samples = 0;
+        return debouncer->stable;
+    }
+
+    if (raw != debouncer->candidate) {
+        debouncer->candidate = raw;
+        debouncer->candidate_samples = 1;
+        return debouncer->stable;
+    }
+
+    if (debouncer->candidate_samples < INPUT_DEBOUNCE_SAMPLES) {
+        ++debouncer->candidate_samples;
+    }
+    if (debouncer->candidate_samples >= INPUT_DEBOUNCE_SAMPLES) {
+        debouncer->stable = raw;
+        debouncer->candidate_samples = 0;
+    }
+    return debouncer->stable;
 }
 
 static uint8_t calculate_level(const uint8_t *buffer, size_t length)
@@ -227,11 +264,23 @@ static void physical_button_task(void *context)
         expander = NULL;
     }
 
+    input_debouncer_t touch_debouncer = {0};
+    input_debouncer_t pwr_debouncer = {0};
+    input_debouncer_t boot_debouncer = {0};
     TickType_t last_control_sync = xTaskGetTickCount();
     while (true) {
-        vTaskDelay(pdMS_TO_TICKS(20));
+        vTaskDelay(pdMS_TO_TICKS(INPUT_SCAN_MS));
 
-        const bool boot_pressed = gpio_get_level(GPIO_NUM_0) == 0;
+        const bool touch_pressed = debounce_input(
+            &touch_debouncer, atomic_load(&s_touch_pressed_raw));
+        const bool touch_active =
+            (atomic_load(&s_trigger_sources) & TRIGGER_SOURCE_TOUCH) != 0;
+        if (touch_pressed != touch_active) {
+            set_trigger_source(TRIGGER_SOURCE_TOUCH, touch_pressed, false);
+        }
+
+        const bool boot_pressed = debounce_input(
+            &boot_debouncer, gpio_get_level(GPIO_NUM_0) == 0);
         if (boot_pressed != atomic_load(&s_clipboard_pressed)) {
             set_clipboard_pressed(boot_pressed, false);
         }
@@ -239,7 +288,8 @@ static void physical_button_task(void *context)
         if (expander != NULL) {
             uint32_t level_mask = 0;
             if (esp_io_expander_get_level(expander, PWR_BUTTON_PIN, &level_mask) == ESP_OK) {
-                const bool pwr_pressed = (level_mask & PWR_BUTTON_PIN) != 0;
+                const bool pwr_pressed = debounce_input(
+                    &pwr_debouncer, (level_mask & PWR_BUTTON_PIN) != 0);
                 const bool pwr_active =
                     (atomic_load(&s_trigger_sources) & TRIGGER_SOURCE_PWR) != 0;
                 if (pwr_pressed != pwr_active) {
@@ -261,6 +311,7 @@ void app_main(void)
     atomic_store(&s_ui_ready, false);
     atomic_store(&s_usb_mounted, false);
     atomic_store(&s_clipboard_pressed, false);
+    atomic_store(&s_touch_pressed_raw, false);
     atomic_store(&s_trigger_sources, 0);
     s_trigger_mutex = xSemaphoreCreateMutex();
     ESP_ERROR_CHECK(s_trigger_mutex != NULL ? ESP_OK : ESP_ERR_NO_MEM);
