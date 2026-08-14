@@ -2,29 +2,104 @@
 
 English · [中文](README.zh.md)
 
-![MLX VoiceOps local voice workflow](docs/assets/voiceops-hero.png)
+![Using the ESP32-S3 Touch AMOLED as a push-to-talk microphone for MLX VoiceOps](docs/assets/voiceops-hardware-use-case.png)
 
-MLX VoiceOps is a local-first macOS menu bar app for voice input, translation, and writing assistance. Hold `Fn`, speak naturally, and release: VoiceOps transcribes the complete utterance, runs an optional local rewrite, and inserts the result back into the app you were using.
+MLX VoiceOps is a local-first macOS menu bar app for voice input, translation,
+and writing assistance. Use the Mac `Fn` key, or connect the round Waveshare
+ESP32-S3 microphone and hold its screen: speak, release, and the final text is
+inserted once into the app you were using.
 
-The entire inference path runs on your Apple Silicon Mac with MLX, sherpa-onnx, and Ollama. Network access is only needed to install dependencies and download models.
+Speech recognition and optional rewriting run locally on Apple Silicon with
+MLX, sherpa-onnx, and Ollama. Network access is only needed to install
+dependencies and download models.
 
-> This project currently targets Chinese-to-English voice workflows by default. Translation, voice polishing, and action-summary prompts are editable in Preferences.
+> The default prompt turns Chinese speech into natural English. Voice,
+> translation, and action-summary prompts are editable in Preferences.
 
-## What you can do
+## At a glance
 
-| Action | Default shortcut | Result |
+| Area | Default behavior |
+| --- | --- |
+| Activation | Hold Mac `Fn`, the board touchscreen, or the board PWR button |
+| Audio source | Prefer `MLX Voice Mic` while connected; otherwise use the current macOS input |
+| Recognition | Low-latency sherpa-onnx preview plus final GLM-ASR MLX transcription |
+| Text processing | Optional local Ollama rewrite, with the transcript as the fallback |
+| Delivery | One focus-guarded paste per recording; copy-only fallback if focus changed |
+| Privacy | Audio, text, clipboard history, and inference remain on the Mac after setup |
+
+## Everyday controls
+
+| Action | Mac | ESP32-S3 board | Result |
+| --- | --- | --- | --- |
+| Voice input | Hold `Fn`, then release | Hold the display or PWR, then release | Preview, final recognition, optional rewrite, and one insertion |
+| Clipboard history | `Command + Fn` | Press BOOT once | Toggle the searchable clipboard panel |
+| Translate selection | `Command + Option + T` | — | Open the streaming local translation panel |
+| Preferences | `Command + Option + P` | — | Open setup, permissions, models, and prompts |
+
+When the board is connected, every new recording prefers its USB microphone.
+After it is unplugged, the next recording transparently falls back to the
+current macOS input. Board F13/F14 reports are accepted only from its exact USB
+VID/PID, so docks and unrelated keyboards cannot create a second recording.
+
+## Supported microphone hardware
+
+The firmware in this repository targets the **Waveshare
+ESP32-S3-Touch-AMOLED-1.75**, standard model **SKU 31261**. This is the original
+1.75-inch board, not the newer `1.75C` product.
+
+| Part | Model / specification | Role in VoiceOps |
 | --- | --- | --- |
-| Voice input | Hold `Fn`, then release | Live preview, final transcription, local LLM processing, and insertion |
-| Translate selected text | `Command + Option + T` | Opens a streaming local translation panel |
-| Open clipboard history | `Command + Fn` | Searches and reuses recent text, images, and VoiceOps output |
-| Open Preferences | `Command + Option + P` | Opens setup even when the menu bar item is hidden |
+| Board | `ESP32-S3-Touch-AMOLED-1.75`, SKU `31261` | Tested firmware target |
+| SoC | `ESP32-S3R8`, dual-core LX7 up to 240 MHz | USB Audio, HID, OTA, UI, and audio capture |
+| Memory | 8 MB PSRAM + external 16 MB Flash | Dual OTA slots plus preserved Jam assets |
+| AMOLED | 1.75 inch, 466×466, `CO5300` over QSPI | Jam animation and full-dial level ring |
+| Touch | `CST9217` over I2C | Push-to-talk touchscreen |
+| Audio ADC | `ES7210`, dual onboard microphones | 24 kHz mono, 16-bit USB microphone stream |
+| Power / I/O | `AXP2101` + `TCA9554` | PWR input, power control, and GPIO expansion |
+| Sensors | `QMI8658` IMU + `PCF85063` RTC | Present on the board; not required by VoiceOps |
 
-VoiceOps combines two speech recognizers:
+Waveshare also lists the `-B` enclosure version as SKU `31262` and the `-G` GPS
+version as SKU `31264`. They are official variants, but this project currently
+regression-tests only SKU `31261`. Do not flash this image onto
+`ESP32-S3-Touch-AMOLED-1.75C`.
 
-- a compact sherpa-onnx model for low-latency preview while you speak;
-- a GLM-ASR MLX model for the accurate final transcript after release.
+The model numbers and board specifications above are cross-checked against the
+[official Waveshare documentation](https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.75)
+and the [ESP32-S3 datasheet](https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf).
 
-The final text is processed by the local Ollama model. If the model is unavailable, the voice workflow falls back to the original transcript instead of losing your input.
+### Board UI and USB interfaces
+
+- Hold the display or PWR to send the private F13 push-to-talk state.
+- Release to finish the same recording. Natural speech never starts a session.
+- While held, the preserved Jam character switches to its thinking state and a
+  speech-sensitive green ring runs around the full display.
+- Press BOOT during normal operation to send F14 and toggle clipboard history.
+- The board enumerates as `MLX Voice Mic`: USB Audio + keyboard HID + an
+  independent vendor HID updater, VID/PID `0x303A:0x4002`.
+- A 100 ms stable-input filter, periodic absolute HID state, and forced release
+  on removal protect the workflow across USB docks and hot-plug events.
+
+The original Xiaozhi Jam GIF resources stay in the Flash `assets` partition at
+`0x800000`; the firmware reads them in place and does not replace them.
+
+## How the voice path works
+
+```mermaid
+flowchart LR
+    A["Mac Fn or board F13"] --> B["One recording session"]
+    B --> C["MLX Voice Mic if connected"]
+    C --> D["16 kHz capture pipeline"]
+    D --> E["Streaming preview :8790"]
+    D --> F["Final MLX ASR :8765"]
+    F --> G["Local Ollama :11434"]
+    G --> H["One guarded paste"]
+    H --> I["Clipboard history"]
+```
+
+The preview window never takes keyboard focus. VoiceOps records the foreground
+application at session start and sends exactly one private Cmd+V only if that
+application is still in front. If focus changed or event delivery is
+unavailable, the final text remains on the clipboard for manual recovery.
 
 ## Requirements
 
@@ -33,13 +108,15 @@ The final text is processed by the local Ollama model. If the model is unavailab
 - Xcode
 - Python 3.9 or later
 - [Ollama for macOS](https://ollama.com/download/mac)
-- Internet access during the first installation
+- Internet access during first installation
+- Optional hardware path: Waveshare SKU `31261` and a data-capable USB Type-C cable
 
-The first installation downloads several gigabytes of models. The default install is per-user and does not require an administrator password.
+The first installation downloads several gigabytes of models. The default
+install is per-user and does not require an administrator password.
 
-## Install
+## Quick start
 
-Install and open Ollama first. Then run:
+Install and open Ollama first, then run:
 
 ```bash
 git clone https://github.com/xiaokhkh/mlx-voiceops.git
@@ -47,42 +124,57 @@ cd mlx-voiceops
 ./scripts/install.sh
 ```
 
-The installer can be run again safely. It will:
-
-1. create or update both Python virtual environments;
-2. install the minimal speech-recognition dependency set;
-3. download the streaming and final ASR models when missing;
-4. start Ollama when necessary and pull the default LLM;
-5. build the Release app;
-6. install it at `~/Applications/VoiceOps.app`;
-7. remember this checkout's sidecar location;
-8. launch VoiceOps.
+The repeatable installer prepares both Python environments, downloads missing
+ASR models, prepares the default Ollama model, builds the Release app, installs
+it at `~/Applications/VoiceOps.app`, records the checkout's sidecar path, and
+launches VoiceOps.
 
 ### First run
 
-Preferences opens automatically the first time VoiceOps starts.
-
-1. Open the **Permissions** tab.
-2. Grant **Input Monitoring**, **Accessibility**, and **Microphone** access once.
+1. Open Preferences → **Permissions**.
+2. Grant **Input Monitoring**, **Accessibility**, and **Microphone** once.
 3. Return to VoiceOps and click **Refresh Status**.
 4. Confirm that permissions and Local Runtime items are green.
-5. Focus a text field, hold `Fn`, speak, and release.
+5. Focus a text field, hold `Fn` or the board display, speak, and release.
 
-Permission requests are only triggered by the corresponding buttons or a voice action. VoiceOps does not repeatedly request permissions at launch.
+Permission prompts are only triggered by the matching setup button or voice
+action. VoiceOps does not repeatedly request permissions at launch.
 
-### ESP32-S3 Touch AMOLED microphone
+## Install and update the board firmware
 
-The repository includes firmware for the Waveshare
-ESP32-S3-Touch-AMOLED-1.75. It enumerates as the `MLX Voice Mic` USB Audio + HID
-composite device. Hold the display or PWR for push-to-talk; press BOOT while the
-firmware is running to toggle VoiceOps clipboard history. Firmware updates use
-an independent HID interface over the same Type-C cable: no Wi-Fi, extra 5-wire
-connection, or update button press is required after the one-time installation.
+Build with ESP-IDF 5.5.x from the firmware directory:
 
-Source and flashing instructions are under
-[firmware/esp32-s3-touch-amoled-1.75](firmware/esp32-s3-touch-amoled-1.75/README.md).
-The complete Chinese integration handoff and known-issue list is in
-[docs/ESP32_S3_TOUCH_AMOLED_1_75_ZH.md](docs/ESP32_S3_TOUCH_AMOLED_1_75_ZH.md).
+```bash
+cd firmware/esp32-s3-touch-amoled-1.75
+idf.py set-target esp32s3
+idf.py build
+```
+
+The first installation writes a new dual-slot partition table. Use the
+ESP32-S3 ROM downloader once over the same Type-C cable: hold BOOT while
+reconnecting the cable, release it after the ROM device appears, then run:
+
+```bash
+idf.py -p /dev/cu.usbmodemXXXX flash
+```
+
+Never run `erase-flash`: the Jam assets occupy `0x800000-0xFFFFFF` and are
+deliberately preserved.
+
+After that one-time installation, update a normally running board without any
+button press, Wi-Fi setup, or 5-wire adapter:
+
+```bash
+./scripts/update_esp32_firmware.sh
+```
+
+The updater validates the image and CRC, writes the inactive OTA slot, selects
+it atomically, and restarts the board over the existing Type-C connection.
+
+See the [firmware guide](firmware/esp32-s3-touch-amoled-1.75/README.md),
+[USB OTA protocol](docs/ESP32_USB_OTA_PROTOCOL.md), and
+[Chinese hardware handoff](docs/ESP32_S3_TOUCH_AMOLED_1_75_ZH.md) for recovery,
+partition, and integration details.
 
 ## Diagnose a setup
 
@@ -92,27 +184,19 @@ Run the read-only doctor whenever installation or recognition is not working:
 ./scripts/doctor.sh
 ```
 
-It checks the Mac architecture, build tools, Python environments, ASR models, local ports, Ollama model, installed app, code signature, and saved sidecar path.
-
-Common fixes:
-
-| Symptom | Fix |
+| Symptom | Check or fix |
 | --- | --- |
+| `Fn` does nothing | Enable Input Monitoring; avoid password fields while testing |
+| Board does not start dictation | Confirm `MLX Voice Mic` is present and the app has Input Monitoring access |
+| Board stays in input state | Reconnect it and confirm current firmware; removal should force a release |
+| Text is recognized but not inserted | Enable Accessibility and keep the original target app in front; otherwise recover it from the clipboard |
+| Board audio is not selected | Confirm the USB Audio device is named `MLX Voice Mic`; a new session selects it automatically |
 | A model or environment is missing | Run `./scripts/install.sh` again |
-| The repository was moved | Run the installer again to refresh the saved sidecar path |
-| A local service is offline | Launch VoiceOps, then inspect logs from Preferences → Permissions → Open Logs |
-| `Fn` does nothing | Enable Input Monitoring and avoid password fields while testing |
-| Text is not inserted | Enable Accessibility and keep focus in the original target app |
-| Microphone is unavailable | Use the Microphone button in Preferences; do not repeatedly relaunch the app |
 | Ollama is unavailable | Open Ollama, then run `ollama pull qwen2.5-coder:7b-instruct-q5_1` |
 
-Sidecar logs are stored in:
+Runtime logs are stored in `~/Library/Logs/VoiceOps/`.
 
-```text
-~/Library/Logs/VoiceOps/
-```
-
-## Installer options
+### Installer options
 
 ```text
 ./scripts/install.sh [options]
@@ -124,7 +208,7 @@ Sidecar logs are stored in:
 --python PATH       Use a specific Python 3.9+ executable
 ```
 
-Environment overrides:
+### Environment overrides
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -148,35 +232,17 @@ Environment overrides:
 | Clipboard history | Up to 200 recent items | `~/Library/Application Support/mlx-voiceops/` |
 | Runtime logs | Sidecar stdout and stderr | `~/Library/Logs/VoiceOps/` |
 
-After setup, audio transcription and LLM processing use loopback-only local services. Prompt templates are stored in macOS user defaults and can be edited under Preferences → LLM.
-
-## How it works
-
-```mermaid
-flowchart LR
-    A["Hold Fn"] --> B["Capture microphone audio"]
-    B --> C["Streaming ASR :8790"]
-    C --> D["Floating preview"]
-    B --> E["Final MLX ASR :8765"]
-    E --> F["Local Ollama LLM :11434"]
-    F --> G["Focus-safe insertion"]
-    H["Selected text"] --> F
-    G --> I["Clipboard history"]
-```
-
-The preview window never takes keyboard focus. VoiceOps remembers the foreground app at recording start and publishes exactly one guarded Cmd+V only while that PID remains in front. If focus changed or event delivery is unavailable, the final text stays on the clipboard for manual recovery.
+After setup, transcription and LLM processing use loopback-only local services.
+Prompt templates are stored in macOS user defaults and can be edited under
+Preferences → LLM.
 
 ## Development
 
-The installer is also the fastest way to prepare a development checkout. To run the sidecars manually afterward:
+The installer is also the fastest way to prepare a development checkout. To
+run the sidecars manually afterward:
 
 ```bash
 ./scripts/dev_run.sh
-```
-
-Open the macOS project:
-
-```bash
 open apps/macos/VoiceOps.xcodeproj
 ```
 
@@ -213,17 +279,18 @@ Manual product checks are documented in [docs/TESTING.md](docs/TESTING.md).
 ### Repository layout
 
 ```text
-apps/macos/VoiceOps/          SwiftUI and AppKit application
-apps/macos/project.yml        XcodeGen project definition
-sidecars/asr_mlx/             Final GLM-ASR service
-sidecars/fast_asr/            Streaming sherpa-onnx service
-firmware/esp32-s3-touch-amoled-1.75/  Board USB microphone firmware
-scripts/install.sh            Repeatable per-user installer
-scripts/doctor.sh             Read-only setup diagnostics
-scripts/dev_run.sh            Manual sidecar launcher
-docs/                         Testing notes and project assets
+apps/macos/VoiceOps/                    SwiftUI and AppKit application
+sidecars/asr_mlx/                       Final GLM-ASR service
+sidecars/fast_asr/                      Streaming sherpa-onnx service
+firmware/esp32-s3-touch-amoled-1.75/   USB microphone and OTA firmware
+scripts/                                Installer, diagnostics, and updater
+docs/                                   Protocols, handoff notes, tests, and assets
 ```
 
 ## Project status
 
-MLX VoiceOps is an active local-first prototype. The main voice pipeline works end to end, but startup latency and recognition quality still depend on the Mac, microphone, language mix, and selected local models.
+MLX VoiceOps is an active local-first prototype. The end-to-end Mac and
+ESP32-S3 path is working, including dock-safe push-to-talk, hot-plug microphone
+fallback, one-shot text delivery, and button-free subsequent OTA. Startup
+latency and recognition quality still depend on the Mac, language mix, and
+selected local models.

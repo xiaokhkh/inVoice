@@ -4,6 +4,25 @@ Dedicated USB Audio Class microphone firmware for the Waveshare
 ESP32-S3-Touch-AMOLED-1.75. It keeps the existing Xiaozhi `assets` partition and
 uses the preserved 384×384 Jam animations as the interaction UI.
 
+## Hardware target
+
+| Part | Model / specification |
+| --- | --- |
+| Tested board | Waveshare `ESP32-S3-Touch-AMOLED-1.75`, standard SKU `31261` |
+| SoC | `ESP32-S3R8`, 8 MB PSRAM, external 16 MB Flash |
+| Display | 1.75-inch 466×466 AMOLED, `CO5300` QSPI controller |
+| Touch | `CST9217` I2C controller |
+| Audio | Dual onboard microphones through `ES7210` |
+| Power and I/O | `AXP2101` PMIC and `TCA9554` I/O expander |
+| Other onboard devices | `QMI8658` IMU and `PCF85063` RTC; unused by this firmware |
+
+Waveshare identifies the enclosure variant as SKU `31262` (`-B`) and the GPS
+variant as SKU `31264` (`-G`). This project regression-tests only the standard
+SKU `31261`. The similarly named `ESP32-S3-Touch-AMOLED-1.75C` is different
+hardware and is not a supported target. See the
+[official board documentation](https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.75)
+for the manufacturer specification.
+
 ## UI states
 
 - `happy.gif`: USB connected

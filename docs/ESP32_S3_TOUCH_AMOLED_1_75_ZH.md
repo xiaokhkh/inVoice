@@ -1,30 +1,46 @@
-# ESP32-S3 Touch AMOLED 1.75 麦克风集成交接
+# ESP32-S3 Touch AMOLED 1.75 收音器与集成交接
+
+![ESP32-S3 圆屏收音器连接 Mac 的按住说话场景](assets/voiceops-hardware-use-case.png)
+
+## 硬件型号
+
+本项目把 Waveshare 圆屏开发板改造成 VoiceOps 专用的 USB 收音器、物理
+按住说话控制器和剪贴板入口。当前实测目标为标准版
+`ESP32-S3-Touch-AMOLED-1.75`，Waveshare SKU `31261`。
+
+| 部件 | 型号 / 规格 | 本项目用途 |
+| --- | --- | --- |
+| 开发板 | `ESP32-S3-Touch-AMOLED-1.75`，SKU `31261` | 当前实测目标 |
+| 主控 | `ESP32-S3R8`，双核 LX7，最高 240 MHz | USB Audio、HID、OTA 与 UI |
+| 存储 | 8 MB PSRAM + 外置 16 MB Flash | 双 OTA 槽与保留的 Jam assets |
+| 显示 | 1.75 英寸 466×466 AMOLED，`CO5300` | Jam 动画和绿色整圈音量环 |
+| 触摸 | `CST9217` | 屏幕按住说话 |
+| 音频 | 双麦克风 + `ES7210` | 24 kHz 单声道 USB 收音 |
+| 电源 / I/O | `AXP2101` + `TCA9554` | PWR 输入、电源与扩展 GPIO |
+| 其他 | `QMI8658` IMU + `PCF85063` RTC | 板载但当前链路不依赖 |
+
+官方还提供带壳版 `-B`（SKU `31262`）和 GPS 版 `-G`（SKU `31264`），
+但本项目只对 SKU `31261` 做回归验证。不要刷入名字相近但硬件不同的
+`ESP32-S3-Touch-AMOLED-1.75C`。型号与规格来源：
+[Waveshare 官方文档](https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.75)、
+[Espressif ESP32-S3 数据手册](https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf)。
 
 ## 项目目录
 
-统一后的主项目目录：
-
-```text
-/Users/aminer/Documents/Codex/2026-08-10/https-github-com-xiaokhkh-mlx-voiceops/work/mlx-voiceops
-```
-
-板端固件已经集成到：
+固件已集成在主仓库内：
 
 ```text
 firmware/esp32-s3-touch-amoled-1.75/
 ```
 
-当前安装并运行的 macOS 应用：
+macOS 应用的默认安装位置：
 
 ```text
-/Users/aminer/Applications/VoiceOps.app
+~/Applications/VoiceOps.app
 ```
 
-原始小智完整备份、Jam assets 备份及独立刷机包仍保存在：
-
-```text
-/Users/aminer/Documents/Codex/2026-08-14/j/outputs/
-```
+原始小智全片备份和 Jam assets 备份不纳入 Git；首次刷写前应另外保存一份，
+并避免使用 `erase-flash`。
 
 ## 已实现链路
 

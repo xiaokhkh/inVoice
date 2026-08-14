@@ -2,29 +2,98 @@
 
 中文 · [English](README.en.md)
 
-![MLX VoiceOps 本地语音工作流](docs/assets/voiceops-hero.png)
+![使用 ESP32-S3 Touch AMOLED 作为 MLX VoiceOps 按住说话麦克风](docs/assets/voiceops-hardware-use-case.png)
 
-MLX VoiceOps 是一款本地优先的 macOS 菜单栏语音工具，用于语音输入、翻译和写作辅助。按住 `Fn` 自然说话，松开后，VoiceOps 会完成最终识别、按需进行本地改写，并把结果插回你正在使用的应用。
+MLX VoiceOps 是一款本地优先的 macOS 菜单栏语音工具，用于语音输入、翻译和
+写作辅助。既可以按住 Mac 的 `Fn`，也可以接入圆形 Waveshare ESP32-S3
+收音器并按住屏幕：说话、松开，最终文字只会插入一次到原来的应用。
 
-整条推理链路运行在 Apple Silicon Mac 本机，使用 MLX、sherpa-onnx 和 Ollama。只有首次安装依赖和下载模型时需要联网。
+语音识别和可选改写均在 Apple Silicon Mac 本机运行，使用 MLX、
+sherpa-onnx 和 Ollama。只有安装依赖和下载模型时需要联网。
 
-> 当前默认面向“中文语音转自然英文”的使用场景。选中文本翻译、语音润色和行动摘要的提示词都可以在 Preferences 中修改。
+> 默认提示词会把中文语音整理成自然英文。语音、翻译和行动摘要提示词都可在
+> Preferences 中修改。
 
-## 可以做什么
+## 项目一览
 
-| 操作 | 默认快捷键 | 结果 |
+| 项目 | 默认行为 |
+| --- | --- |
+| 触发方式 | 按住 Mac `Fn`、开发板屏幕或开发板 PWR |
+| 麦克风源 | 连接时优先 `MLX Voice Mic`，断开后使用当前 macOS 输入 |
+| 语音识别 | sherpa-onnx 低延迟预览 + GLM-ASR MLX 最终识别 |
+| 文本处理 | 可选本地 Ollama 改写；不可用时回退到原始识别文本 |
+| 文本投递 | 每次录音只粘贴一次；焦点变化时降级为仅复制 |
+| 隐私 | 首次配置完成后，音频、文字、剪贴板历史和推理都留在 Mac 本机 |
+
+## 日常操作
+
+| 操作 | Mac | ESP32-S3 开发板 | 结果 |
+| --- | --- | --- | --- |
+| 语音输入 | 按住 `Fn`，说完松开 | 按住屏幕或 PWR，说完松开 | 实时预览、最终识别、可选改写并插入一次 |
+| 剪贴板历史 | `Command + Fn` | 按一下 BOOT | 切换可搜索的剪贴板面板 |
+| 翻译选中文字 | `Command + Option + T` | — | 打开流式本地翻译面板 |
+| 设置 | `Command + Option + P` | — | 打开权限、模型和提示词设置 |
+
+开发板连接时，每个新录音 Session 都会优先选择它的 USB 麦克风；拔掉后，
+下一次录音自动回退到当前 macOS 输入。板端 F13/F14 只接受指定 USB
+VID/PID 的 HID 报告，因此扩展坞或其他键盘不会制造第二份录音。
+
+## 支持的收音器硬件
+
+仓库内固件面向 **Waveshare ESP32-S3-Touch-AMOLED-1.75** 标准版，
+型号 **SKU 31261**。这是初代 1.75 英寸开发板，不是后续的 `1.75C`。
+
+| 部件 | 具体型号 / 规格 | 在 VoiceOps 中的用途 |
 | --- | --- | --- |
-| 语音输入 | 按住 `Fn`，说完松开 | 实时预览、最终识别、本地 LLM 处理并插入文字 |
-| 翻译选中文字 | `Command + Option + T` | 打开流式本地翻译面板 |
-| 打开剪贴板历史 | `Command + Fn` | 搜索和复用最近的文字、图片及 VoiceOps 输出 |
-| 打开设置 | `Command + Option + P` | 即使菜单栏图标被隐藏，也能进入设置和诊断 |
+| 开发板 | `ESP32-S3-Touch-AMOLED-1.75`，SKU `31261` | 已实测的固件目标 |
+| SoC | `ESP32-S3R8`，双核 LX7，最高 240 MHz | USB Audio、HID、OTA、UI 和音频采集 |
+| 内存 | 8 MB PSRAM + 外置 16 MB Flash | 双 OTA 槽和保留的 Jam 资源 |
+| AMOLED | 1.75 英寸、466×466、`CO5300`、QSPI | Jam 动画与整圈绿色音量环 |
+| 触摸 | `CST9217`、I2C | 屏幕按住说话 |
+| 音频 ADC | `ES7210`、板载双麦克风 | 24 kHz、单声道、16-bit USB 音频流 |
+| 电源 / I/O | `AXP2101` + `TCA9554` | PWR 输入、电源管理与 GPIO 扩展 |
+| 传感器 | `QMI8658` IMU + `PCF85063` RTC | 板上自带，VoiceOps 当前不依赖 |
 
-VoiceOps 组合了两套语音识别模型：
+Waveshare 还列出了带壳版 `-B`（SKU `31262`）和 GPS 版 `-G`
+（SKU `31264`）。它们是官方变体，但项目目前只对 SKU `31261` 做回归验证。
+请勿把该固件刷入 `ESP32-S3-Touch-AMOLED-1.75C`。
 
-- 说话过程中，使用轻量 sherpa-onnx 模型提供低延迟预览；
-- 松开按键后，使用 GLM-ASR MLX 模型生成更准确的最终结果。
+以上型号与规格已根据
+[Waveshare 官方文档](https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.75)
+和 [ESP32-S3 数据手册](https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf)
+交叉核对。
 
-最终文本交给本地 Ollama 模型处理。如果 Ollama 暂时不可用，语音流程会回退到原始识别结果，不会丢失输入。
+### 板端 UI 与 USB 接口
+
+- 按住屏幕或 PWR，开发板发送私有 F13 按住说话状态。
+- 松开后结束同一录音；自然人声永远不会自行触发 Session。
+- 仅按住期间，保留的 Jam 表情切换到 thinking，绿色音量环绕整块圆屏显示。
+- 正常运行时按一下 BOOT，发送 F14 并切换剪贴板历史面板。
+- 设备名为 `MLX Voice Mic`，同时提供 USB Audio、键盘 HID 和独立厂商
+  HID 更新接口，VID/PID 为 `0x303A:0x4002`。
+- 100 ms 稳定输入过滤、周期性绝对 HID 状态和拔出强制松开，用于保护扩展坞、
+  休眠恢复和热插拔场景。
+
+原小智固件的 Jam GIF 继续保存在 Flash `0x800000` 起始的 `assets` 分区；
+新固件只读取这些资源，不替换它们。
+
+## 语音链路
+
+```mermaid
+flowchart LR
+    A["Mac Fn 或板端 F13"] --> B["唯一录音 Session"]
+    B --> C["连接时选择 MLX Voice Mic"]
+    C --> D["16 kHz 采集链路"]
+    D --> E["流式预览 :8790"]
+    D --> F["最终 MLX ASR :8765"]
+    F --> G["本地 Ollama :11434"]
+    G --> H["一次受保护的粘贴"]
+    H --> I["剪贴板历史"]
+```
+
+预览窗口不会抢走键盘焦点。VoiceOps 会在录音开始时记录前台应用；只有该应用
+仍在前台时，才通过 private event source 发送一次 Cmd+V。若焦点已经变化或
+事件投递不可用，最终文字会保留在剪贴板供手动恢复。
 
 ## 环境要求
 
@@ -34,10 +103,11 @@ VoiceOps 组合了两套语音识别模型：
 - Python 3.9 或更高版本
 - [macOS 版 Ollama](https://ollama.com/download/mac)
 - 首次安装时可访问互联网
+- 可选硬件链路：Waveshare SKU `31261` 和支持数据传输的 USB Type-C 线
 
-首次安装会下载数 GB 的本地模型。默认安装在当前用户目录，不需要管理员密码。
+首次安装会下载数 GB 本地模型。默认安装在当前用户目录，不需要管理员密码。
 
-## 安装
+## 快速开始
 
 先安装并打开 Ollama，然后运行：
 
@@ -47,81 +117,85 @@ cd mlx-voiceops
 ./scripts/install.sh
 ```
 
-安装器可以安全地重复运行，它会依次：
-
-1. 创建或更新两个 Python 虚拟环境；
-2. 安装语音识别实际需要的最小依赖；
-3. 在模型缺失时下载流式和最终 ASR 模型；
-4. 在需要时启动 Ollama，并拉取默认 LLM；
-5. 构建 Release App；
-6. 安装到 `~/Applications/VoiceOps.app`；
-7. 记录当前仓库的 sidecar 位置；
-8. 启动 VoiceOps。
+安装器可以重复执行。它会准备两个 Python 环境、下载缺失的 ASR 模型、准备
+默认 Ollama 模型、构建 Release App、安装到
+`~/Applications/VoiceOps.app`、记录 sidecar 路径并启动 VoiceOps。
 
 ### 首次运行
 
-VoiceOps 第一次启动时会自动打开 Preferences。
-
-1. 进入 **Permissions** 页面。
+1. 打开 Preferences → **Permissions**。
 2. 分别授予一次 **输入监控**、**辅助功能**和**麦克风**权限。
 3. 回到 VoiceOps，点击 **Refresh Status**。
 4. 确认权限与 Local Runtime 项目全部为绿色。
-5. 聚焦任意文本输入框，按住 `Fn` 说话，松开后等待结果插入。
+5. 聚焦任意文本框，按住 `Fn` 或开发板屏幕，说话后松开。
 
-系统权限只会由相应按钮或语音操作触发。VoiceOps 启动时不会反复弹出权限请求。
+权限请求只由对应设置按钮或语音操作触发，VoiceOps 启动时不会重复弹窗。
 
-### ESP32-S3 Touch AMOLED 麦克风
+## 安装和更新板端固件
 
-项目内已包含 Waveshare ESP32-S3-Touch-AMOLED-1.75 专用固件。开发板会作为
-`MLX Voice Mic` USB 音频与 HID 复合设备连接；按住屏幕或 PWR 进行语音输入，
-固件正常运行时按一下 BOOT 可切换 VoiceOps 剪贴板历史面板。
+使用 ESP-IDF 5.5.x 在固件目录构建：
 
-固件源码和刷写说明位于
-[firmware/esp32-s3-touch-amoled-1.75](firmware/esp32-s3-touch-amoled-1.75/README.md)，
-完整集成交接与现有问题见
-[docs/ESP32_S3_TOUCH_AMOLED_1_75_ZH.md](docs/ESP32_S3_TOUCH_AMOLED_1_75_ZH.md)。
+```bash
+cd firmware/esp32-s3-touch-amoled-1.75
+idf.py set-target esp32s3
+idf.py build
+```
 
-## 诊断安装状态
+首次安装需要写入新的双槽分区表，因此只在这一次使用同一根 Type-C 线进入
+ESP32-S3 ROM 下载模式：按住 BOOT 重新连接，ROM 设备出现后松开，再运行：
 
-安装或识别异常时，运行只读诊断：
+```bash
+idf.py -p /dev/cu.usbmodemXXXX flash
+```
+
+不要运行 `erase-flash`：Jam assets 占用 `0x800000-0xFFFFFF`，必须保留。
+
+首次安装完成后，开发板正常运行时直接更新，不再按键，不需要 Wi-Fi 或五线下载器：
+
+```bash
+./scripts/update_esp32_firmware.sh
+```
+
+更新器会验证 ESP 镜像和 CRC，通过现有 Type-C 连接写入非活动 OTA 槽，原子切换
+启动槽并重启开发板。
+
+恢复、分区和集成细节见[固件说明](firmware/esp32-s3-touch-amoled-1.75/README.md)、
+[USB OTA 协议](docs/ESP32_USB_OTA_PROTOCOL.md)和
+[中文硬件交接](docs/ESP32_S3_TOUCH_AMOLED_1_75_ZH.md)。
+
+## 诊断
+
+安装或识别异常时运行只读诊断：
 
 ```bash
 ./scripts/doctor.sh
 ```
 
-它会检查 Mac 架构、构建工具、Python 环境、ASR 模型、本地端口、Ollama 模型、已安装 App、代码签名和保存的 sidecar 路径。
-
-常见问题：
-
-| 现象 | 处理方式 |
+| 现象 | 检查或处理 |
 | --- | --- |
-| 缺少模型或 Python 环境 | 重新运行 `./scripts/install.sh` |
-| 移动了仓库目录 | 重新运行安装器，刷新保存的 sidecar 路径 |
-| 本地服务未启动 | 启动 VoiceOps，然后在 Preferences → Permissions → Open Logs 查看日志 |
 | 按住 `Fn` 没反应 | 打开输入监控权限；测试时避开密码输入框 |
-| 结果没有插入 | 打开辅助功能权限，并保持原目标应用处于聚焦状态 |
-| 麦克风不可用 | 在 Preferences 中点击麦克风按钮，不要反复重启 App |
+| 按开发板没有进入输入 | 确认系统中存在 `MLX Voice Mic`，并授予输入监控权限 |
+| 开发板一直处于输入状态 | 重新插拔并确认使用当前固件；拔出设备应强制松开 |
+| 已识别但没有插入文字 | 打开辅助功能权限，并保持原目标应用在前台；否则从剪贴板恢复 |
+| 没有选择板载麦克风 | 确认 USB Audio 名称为 `MLX Voice Mic`；新 Session 会自动选择 |
+| 缺少模型或 Python 环境 | 重新运行 `./scripts/install.sh` |
 | Ollama 不可用 | 打开 Ollama，再运行 `ollama pull qwen2.5-coder:7b-instruct-q5_1` |
 
-Sidecar 日志位于：
+运行日志位于 `~/Library/Logs/VoiceOps/`。
 
-```text
-~/Library/Logs/VoiceOps/
-```
-
-## 安装器选项
+### 安装器选项
 
 ```text
 ./scripts/install.sh [options]
 
---skip-models       保留已有 ASR 模型并跳过模型下载
+--skip-models       保留已有 ASR 模型并跳过下载
 --skip-ollama       跳过 Ollama 检查和模型拉取
 --no-launch         安装后不打开 VoiceOps
 --install-dir PATH  安装到 ~/Applications 以外的位置
 --python PATH       使用指定的 Python 3.9+ 可执行文件
 ```
 
-环境变量：
+### 环境变量
 
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
@@ -145,35 +219,15 @@ Sidecar 日志位于：
 | 剪贴板历史 | 最近最多 200 项 | `~/Library/Application Support/mlx-voiceops/` |
 | 运行日志 | Sidecar 标准输出与错误 | `~/Library/Logs/VoiceOps/` |
 
-完成首次下载后，语音识别和 LLM 处理都通过仅监听本机回环地址的服务完成。提示词模板存储在 macOS user defaults 中，可在 Preferences → LLM 中编辑。
-
-## 工作原理
-
-```mermaid
-flowchart LR
-    A["按住 Fn"] --> B["采集麦克风音频"]
-    B --> C["流式 ASR :8790"]
-    C --> D["悬浮预览"]
-    B --> E["最终 MLX ASR :8765"]
-    E --> F["本地 Ollama LLM :11434"]
-    F --> G["焦点安全的文字插入"]
-    H["选中文字"] --> F
-    G --> I["剪贴板历史"]
-```
-
-预览窗口不会抢走键盘焦点。VoiceOps 会记住录音开始时的前台应用；只有该 PID 仍在前台时，才发送一次受保护的 Cmd+V。若焦点改变或事件发送不可用，最终文字会留在剪贴板供手动恢复。
+首次配置完成后，语音识别和 LLM 处理都通过只监听本机回环地址的服务完成。
+提示词模板保存在 macOS user defaults，可在 Preferences → LLM 中编辑。
 
 ## 开发
 
-安装器也是准备开发环境最快的方式。完成安装后，可以手动启动 sidecar：
+安装器也是准备开发环境最快的方式。完成后可手动启动 sidecar 并打开工程：
 
 ```bash
 ./scripts/dev_run.sh
-```
-
-打开 macOS 工程：
-
-```bash
 open apps/macos/VoiceOps.xcodeproj
 ```
 
@@ -193,7 +247,7 @@ xcodebuild -project apps/macos/VoiceOps.xcodeproj \
   -scheme VoiceOps -configuration Release build
 ```
 
-产品手动测试清单见 [docs/TESTING.md](docs/TESTING.md)。
+人工回归清单见 [docs/TESTING.md](docs/TESTING.md)。
 
 ### 本地端点
 
@@ -210,17 +264,16 @@ xcodebuild -project apps/macos/VoiceOps.xcodeproj \
 ### 目录结构
 
 ```text
-apps/macos/VoiceOps/          SwiftUI 与 AppKit 应用
-apps/macos/project.yml        XcodeGen 工程定义
-sidecars/asr_mlx/             最终 GLM-ASR 服务
-sidecars/fast_asr/            流式 sherpa-onnx 服务
-firmware/esp32-s3-touch-amoled-1.75/  开发板 USB 麦克风固件
-scripts/install.sh            可重复执行的用户级安装器
-scripts/doctor.sh             只读安装状态诊断
-scripts/dev_run.sh            手动 sidecar 启动器
-docs/                         测试说明和项目资源
+apps/macos/VoiceOps/                    SwiftUI 与 AppKit 应用
+sidecars/asr_mlx/                       最终 GLM-ASR 服务
+sidecars/fast_asr/                      流式 sherpa-onnx 服务
+firmware/esp32-s3-touch-amoled-1.75/   USB 收音器与 OTA 固件
+scripts/                                安装、诊断和更新工具
+docs/                                   协议、交接、测试和图片资源
 ```
 
 ## 项目状态
 
-MLX VoiceOps 仍是一个活跃开发中的本地优先原型。主要语音链路已经端到端可用，但启动速度和识别效果仍会受到设备、麦克风、语言混合方式以及所选本地模型的影响。
+MLX VoiceOps 仍是活跃开发中的本地优先原型。Mac 与 ESP32-S3 的端到端链路
+已经可用，包括扩展坞防抖、热插拔麦克风回退、一次性文字投递和后续免按键 OTA。
+启动速度和识别效果仍会受到 Mac 性能、语言混合方式和本地模型选择影响。
