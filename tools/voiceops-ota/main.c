@@ -58,6 +58,14 @@ static uint64_t monotonic_milliseconds(void)
     return (uint64_t)value.tv_sec * 1000U + (uint64_t)value.tv_nsec / 1000000U;
 }
 
+static uint16_t next_chunk_size(uint32_t total_size, uint32_t offset)
+{
+    const uint32_t remaining = total_size - offset;
+    return remaining > VOICEOPS_OTA_PAYLOAD_SIZE
+        ? (uint16_t)VOICEOPS_OTA_PAYLOAD_SIZE
+        : (uint16_t)remaining;
+}
+
 static void sleep_milliseconds(unsigned milliseconds)
 {
     struct timespec delay = {
@@ -210,8 +218,13 @@ static bool send_and_wait(IOHIDDeviceRef device,
             response->last_command == request->command) {
             if (response->status != VOICEOPS_OTA_STATUS_OK) {
                 fprintf(stderr, "Device rejected request %u: %s (%" PRIu32
-                                ").\n", request->command,
-                        status_name(response->status), response->status);
+                                "); sequence=%" PRIu32 ", offset=%" PRIu32
+                                ", length=%u, device_next=%" PRIu32
+                                ", total=%" PRIu32 ".\n",
+                        request->command, status_name(response->status),
+                        response->status, request->sequence, request->offset,
+                        request->payload_length, response->next_offset,
+                        response->total_size);
                 return false;
             }
             return true;
@@ -341,10 +354,7 @@ static int run_update(const char *path)
     uint32_t offset = 0;
     unsigned last_percentage = 101;
     while (success && offset < image_size) {
-        uint16_t chunk_size = (uint16_t)(image_size - offset);
-        if (chunk_size > VOICEOPS_OTA_PAYLOAD_SIZE) {
-            chunk_size = VOICEOPS_OTA_PAYLOAD_SIZE;
-        }
+        const uint16_t chunk_size = next_chunk_size(image_size, offset);
         memset(&request, 0, sizeof(request));
         request.magic = VOICEOPS_OTA_MAGIC;
         request.version = VOICEOPS_OTA_PROTOCOL_VERSION;
@@ -439,8 +449,13 @@ static int run_self_test(void)
         fprintf(stderr, "CRC32 self-test failed: %08" PRIx32 "\n", crc);
         return 1;
     }
+    if (next_chunk_size(666496, 11136) != VOICEOPS_OTA_PAYLOAD_SIZE ||
+        next_chunk_size(100, 80) != 20) {
+        fprintf(stderr, "OTA chunk-size boundary self-test failed.\n");
+        return 1;
+    }
     printf("Protocol self-test passed (64-byte reports, CRC32 %08" PRIx32
-           ").\n", crc);
+           ", chunk boundary).\n", crc);
     return 0;
 }
 
