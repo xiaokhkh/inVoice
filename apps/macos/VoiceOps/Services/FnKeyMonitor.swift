@@ -14,9 +14,15 @@ final class FnKeyMonitor {
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var isActivationDown = false
+    private var isBoardTriggerDown = false
+    private var isBoardClipboardDown = false
     private var isClipboardDown = false
     private var isTranslateDown = false
     private let fnKeyCode: CGKeyCode = CGKeyCode(kVK_Function)
+    // The ESP32 composite USB device emits F13 as its private PTT signal.
+    private let boardTriggerKeyCode: CGKeyCode = CGKeyCode(kVK_F13)
+    // BOOT emits F14 as a dedicated clipboard-panel control.
+    private let boardClipboardKeyCode: CGKeyCode = CGKeyCode(kVK_F14)
     private var activationKeyCode: CGKeyCode = CGKeyCode(kVK_Function)
     private var activationModifiers: UInt32 = 0
     private var clipboardKeyCode: CGKeyCode = CGKeyCode(kVK_Function)
@@ -69,6 +75,8 @@ final class FnKeyMonitor {
         globalMonitor = nil
         localMonitor = nil
         isActivationDown = false
+        isBoardTriggerDown = false
+        isBoardClipboardDown = false
         isClipboardDown = false
         isTranslateDown = false
     }
@@ -123,7 +131,19 @@ final class FnKeyMonitor {
             CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         }
         CGEvent.tapEnable(tap: eventTap, enable: true)
+        stopFallbackMonitors()
         return true
+    }
+
+    private func stopFallbackMonitors() {
+        if let globalMonitor {
+            NSEvent.removeMonitor(globalMonitor)
+            self.globalMonitor = nil
+        }
+        if let localMonitor {
+            NSEvent.removeMonitor(localMonitor)
+            self.localMonitor = nil
+        }
     }
 
     private func startFallbackMonitors() {
@@ -167,6 +187,20 @@ final class FnKeyMonitor {
                 }
             }
         } else if type == .keyDown {
+            if keyCode == Int64(boardTriggerKeyCode) {
+                let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+                if !isRepeat {
+                    handleBoardTriggerState(isDown: true)
+                }
+                return nil
+            }
+            if keyCode == Int64(boardClipboardKeyCode) {
+                let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+                if !isRepeat {
+                    handleBoardClipboardState(isDown: true)
+                }
+                return nil
+            }
             if onClipboardToggle != nil, !clipboardUsesFn {
                 let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
                 if !isRepeat, matchesClipboardShortcut(keyCode: keyCode, flags: event.flags) {
@@ -192,8 +226,10 @@ final class FnKeyMonitor {
                 if !isRepeat, keyCode == Int64(activationKeyCode), matchesActivationModifiers(flags: event.flags) {
                     if !isActivationDown {
                         isActivationDown = true
-                        dispatchAction { [weak self] in
-                            self?.onFnDown?()
+                        if !isBoardTriggerDown {
+                            dispatchAction { [weak self] in
+                                self?.onFnDown?()
+                            }
                         }
                     }
                     return nil
@@ -207,6 +243,14 @@ final class FnKeyMonitor {
                 return nil
             }
         } else if type == .keyUp {
+            if keyCode == Int64(boardTriggerKeyCode) {
+                handleBoardTriggerState(isDown: false)
+                return nil
+            }
+            if keyCode == Int64(boardClipboardKeyCode) {
+                handleBoardClipboardState(isDown: false)
+                return nil
+            }
             if !clipboardUsesFn, isClipboardDown, keyCode == Int64(clipboardKeyCode) {
                 isClipboardDown = false
                 return nil
@@ -218,8 +262,10 @@ final class FnKeyMonitor {
             if !activationUsesFn, keyCode == Int64(activationKeyCode) {
                 if isActivationDown {
                     isActivationDown = false
-                    dispatchAction { [weak self] in
-                        self?.onFnUp?()
+                    if !isBoardTriggerDown {
+                        dispatchAction { [weak self] in
+                            self?.onFnUp?()
+                        }
                     }
                 }
                 return nil
@@ -246,6 +292,18 @@ final class FnKeyMonitor {
                 }
             }
         case .keyDown:
+            if event.keyCode == boardTriggerKeyCode {
+                if !event.isARepeat {
+                    handleBoardTriggerState(isDown: true)
+                }
+                return true
+            }
+            if event.keyCode == boardClipboardKeyCode {
+                if !event.isARepeat {
+                    handleBoardClipboardState(isDown: true)
+                }
+                return true
+            }
             if onClipboardToggle != nil, !clipboardUsesFn, !event.isARepeat,
                matchesClipboardShortcut(keyCode: event.keyCode, flags: event.modifierFlags)
             {
@@ -271,8 +329,10 @@ final class FnKeyMonitor {
             {
                 if !isActivationDown {
                     isActivationDown = true
-                    dispatchAction { [weak self] in
-                        self?.onFnDown?()
+                    if !isBoardTriggerDown {
+                        dispatchAction { [weak self] in
+                            self?.onFnDown?()
+                        }
                     }
                 }
                 return true
@@ -284,6 +344,14 @@ final class FnKeyMonitor {
             }
             return true
         case .keyUp:
+            if event.keyCode == boardTriggerKeyCode {
+                handleBoardTriggerState(isDown: false)
+                return true
+            }
+            if event.keyCode == boardClipboardKeyCode {
+                handleBoardClipboardState(isDown: false)
+                return true
+            }
             if !clipboardUsesFn, isClipboardDown, event.keyCode == clipboardKeyCode {
                 isClipboardDown = false
                 return true
@@ -295,8 +363,10 @@ final class FnKeyMonitor {
             if !activationUsesFn, event.keyCode == activationKeyCode {
                 if isActivationDown {
                     isActivationDown = false
-                    dispatchAction { [weak self] in
-                        self?.onFnUp?()
+                    if !isBoardTriggerDown {
+                        dispatchAction { [weak self] in
+                            self?.onFnUp?()
+                        }
                     }
                 }
                 return true
@@ -371,14 +441,51 @@ final class FnKeyMonitor {
     private func handleFnActivationState(fnNow: Bool) {
         if fnNow && !isActivationDown {
             isActivationDown = true
-            dispatchAction { [weak self] in
-                self?.onFnDown?()
+            if !isBoardTriggerDown {
+                dispatchAction { [weak self] in
+                    self?.onFnDown?()
+                }
             }
         } else if !fnNow && isActivationDown {
             isActivationDown = false
-            dispatchAction { [weak self] in
-                self?.onFnUp?()
+            if !isBoardTriggerDown {
+                dispatchAction { [weak self] in
+                    self?.onFnUp?()
+                }
             }
+        }
+    }
+
+    private func handleBoardTriggerState(isDown: Bool) {
+        if isDown && !isBoardTriggerDown {
+            isBoardTriggerDown = true
+            trace("[trigger] source=board state=down activation_down=\(isActivationDown)")
+            if !isActivationDown {
+                dispatchAction { [weak self] in
+                    self?.onFnDown?()
+                }
+            }
+        } else if !isDown && isBoardTriggerDown {
+            isBoardTriggerDown = false
+            trace("[trigger] source=board state=up activation_down=\(isActivationDown)")
+            if !isActivationDown {
+                dispatchAction { [weak self] in
+                    self?.onFnUp?()
+                }
+            }
+        }
+    }
+
+    private func handleBoardClipboardState(isDown: Bool) {
+        if isDown && !isBoardClipboardDown {
+            isBoardClipboardDown = true
+            trace("[trigger] source=board_clipboard state=down")
+            dispatchAction { [weak self] in
+                self?.onClipboardToggle?()
+            }
+        } else if !isDown && isBoardClipboardDown {
+            isBoardClipboardDown = false
+            trace("[trigger] source=board_clipboard state=up")
         }
     }
 
@@ -438,5 +545,9 @@ final class FnKeyMonitor {
             modifiers |= UInt32(shiftKey)
         }
         return modifiers
+    }
+
+    private func trace(_ message: String) {
+        NSLog("%@", message)
     }
 }

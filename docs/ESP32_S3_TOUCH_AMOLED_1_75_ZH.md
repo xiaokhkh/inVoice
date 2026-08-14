@@ -29,7 +29,7 @@ firmware/esp32-s3-touch-amoled-1.75/
 ## 已实现链路
 
 ```text
-屏幕 / PWR / BOOT 按住
+屏幕 / PWR 按住
   -> ESP32-S3 发送 HID F13 key-down
   -> VoiceOps 捕获原输入框和应用
   -> VoiceOps 选择 MLX Voice Mic 录音
@@ -37,7 +37,11 @@ firmware/esp32-s3-touch-amoled-1.75/
   -> 松开时发送 HID F13 key-up
   -> GLM-ASR 最终识别
   -> 本地 Ollama 可选处理
-  -> 恢复录音开始时的输入框并写入文字
+  -> 目标 PID 未变化时发送一次 Cmd+V；否则保留到剪贴板
+
+固件运行时按一下 BOOT
+  -> ESP32-S3 发送 HID F14 key-down / key-up
+  -> VoiceOps 切换剪贴板历史面板
 ```
 
 板端 USB 设备：
@@ -45,15 +49,16 @@ firmware/esp32-s3-touch-amoled-1.75/
 - 产品名：`MLX Voice Mic`
 - VID/PID：`0x303A / 0x4002`
 - 音频：24 kHz、单声道、16-bit PCM
-- HID：F13 按下/松开
+- HID：F13 为语音 PTT，F14 为剪贴板面板开关
 - 麦克风：板载 ES7210，模拟增益 36 dB
 
 ## 板端 UI 行为
 
 - 保留原小智 `assets` 分区里的 Jam GIF。
 - 待机不显示底部文字。
-- 只有按住屏幕、PWR 或 BOOT 时显示绿色圆形实时音量环。
+- 只有按住屏幕或 PWR 时显示绿色圆形实时音量环。
 - 松开后圆环立即隐藏并结束 VoiceOps 本次输入。
+- 固件正常运行时按 BOOT 只切换剪贴板面板，不启动录音或音量环。
 - 自然人声和主机单独打开麦克风不会触发圆环或 F13。
 - PWR 长按关机动作被关闭，避免长句录音时断电。
 
@@ -117,7 +122,7 @@ xcodebuild -project apps/macos/VoiceOps.xcodeproj \
 
 VoiceOps 需要三项 macOS 权限：
 
-- 输入监控：接收 Fn 和板端 F13。
+- 输入监控：接收 Fn，以及板端 F13/F14。
 - 辅助功能：向当前目标应用发送合成 Cmd+V；最终方案不再强制恢复 AX 焦点。
 - 麦克风：采集 `MLX Voice Mic`。
 
@@ -136,4 +141,4 @@ VoiceOps 需要三项 macOS 权限：
    Terminal 等输入框完成人工回归，并测试识别期间切换应用的 copy-only 行为。
 2. 项目默认提示词面向“中文语音转自然英文”，所以中文 ASR 结果可能被本地 LLM 改成英文；若需要中文原样输入，应在 Preferences 调整语音提示词或让路由直接使用 ASR 文本。
 3. Jam GIF 本体没有复制进仓库，固件继续读取开发板已有的 `assets` 分区；全片擦除后必须从备份恢复。
-4. 当前板端更新需要一次 BOOT 重连。若后续频繁迭代，可另加受保护的“进入下载模式”组合手势。
+4. BOOT 在固件运行时用于剪贴板面板；上电或重连时按住 BOOT 仍会进入 ROM 下载模式。

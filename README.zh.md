@@ -8,7 +8,7 @@ MLX VoiceOps 是一款本地优先的 macOS 菜单栏语音工具，用于语音
 
 整条推理链路运行在 Apple Silicon Mac 本机，使用 MLX、sherpa-onnx 和 Ollama。只有首次安装依赖和下载模型时需要联网。
 
-> 当前默认面向“英文语音转自然中文”的使用场景。选中文本翻译、语音润色和行动摘要的提示词都可以在 Preferences 中修改。
+> 当前默认面向“中文语音转自然英文”的使用场景。选中文本翻译、语音润色和行动摘要的提示词都可以在 Preferences 中修改。
 
 ## 可以做什么
 
@@ -69,6 +69,17 @@ VoiceOps 第一次启动时会自动打开 Preferences。
 5. 聚焦任意文本输入框，按住 `Fn` 说话，松开后等待结果插入。
 
 系统权限只会由相应按钮或语音操作触发。VoiceOps 启动时不会反复弹出权限请求。
+
+### ESP32-S3 Touch AMOLED 麦克风
+
+项目内已包含 Waveshare ESP32-S3-Touch-AMOLED-1.75 专用固件。开发板会作为
+`MLX Voice Mic` USB 音频与 HID 复合设备连接；按住屏幕或 PWR 进行语音输入，
+固件正常运行时按一下 BOOT 可切换 VoiceOps 剪贴板历史面板。
+
+固件源码和刷写说明位于
+[firmware/esp32-s3-touch-amoled-1.75](firmware/esp32-s3-touch-amoled-1.75/README.md)，
+完整集成交接与现有问题见
+[docs/ESP32_S3_TOUCH_AMOLED_1_75_ZH.md](docs/ESP32_S3_TOUCH_AMOLED_1_75_ZH.md)。
 
 ## 诊断安装状态
 
@@ -150,7 +161,7 @@ flowchart LR
     G --> I["剪贴板历史"]
 ```
 
-预览窗口不会抢走键盘焦点。VoiceOps 会记住录音开始时的前台应用；如果处理完成前焦点发生变化，会跳过自动插入，避免把内容写到错误的位置。
+预览窗口不会抢走键盘焦点。VoiceOps 会记住录音开始时的前台应用；只有该 PID 仍在前台时，才发送一次受保护的 Cmd+V。若焦点改变或事件发送不可用，最终文字会留在剪贴板供手动恢复。
 
 ## 开发
 
@@ -203,6 +214,7 @@ apps/macos/VoiceOps/          SwiftUI 与 AppKit 应用
 apps/macos/project.yml        XcodeGen 工程定义
 sidecars/asr_mlx/             最终 GLM-ASR 服务
 sidecars/fast_asr/            流式 sherpa-onnx 服务
+firmware/esp32-s3-touch-amoled-1.75/  开发板 USB 麦克风固件
 scripts/install.sh            可重复执行的用户级安装器
 scripts/doctor.sh             只读安装状态诊断
 scripts/dev_run.sh            手动 sidecar 启动器

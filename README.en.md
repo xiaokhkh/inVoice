@@ -8,7 +8,7 @@ MLX VoiceOps is a local-first macOS menu bar app for voice input, translation, a
 
 The entire inference path runs on your Apple Silicon Mac with MLX, sherpa-onnx, and Ollama. Network access is only needed to install dependencies and download models.
 
-> This project currently targets English-to-Chinese voice workflows by default. Translation, voice polishing, and action-summary prompts are editable in Preferences.
+> This project currently targets Chinese-to-English voice workflows by default. Translation, voice polishing, and action-summary prompts are editable in Preferences.
 
 ## What you can do
 
@@ -69,6 +69,18 @@ Preferences opens automatically the first time VoiceOps starts.
 5. Focus a text field, hold `Fn`, speak, and release.
 
 Permission requests are only triggered by the corresponding buttons or a voice action. VoiceOps does not repeatedly request permissions at launch.
+
+### ESP32-S3 Touch AMOLED microphone
+
+The repository includes firmware for the Waveshare
+ESP32-S3-Touch-AMOLED-1.75. It enumerates as the `MLX Voice Mic` USB Audio + HID
+composite device. Hold the display or PWR for push-to-talk; press BOOT while the
+firmware is running to toggle VoiceOps clipboard history.
+
+Source and flashing instructions are under
+[firmware/esp32-s3-touch-amoled-1.75](firmware/esp32-s3-touch-amoled-1.75/README.md).
+The complete Chinese integration handoff and known-issue list is in
+[docs/ESP32_S3_TOUCH_AMOLED_1_75_ZH.md](docs/ESP32_S3_TOUCH_AMOLED_1_75_ZH.md).
 
 ## Diagnose a setup
 
@@ -150,7 +162,7 @@ flowchart LR
     G --> I["Clipboard history"]
 ```
 
-The preview window never takes keyboard focus. VoiceOps remembers the foreground app at the beginning of a recording and skips automatic insertion if focus changes before processing finishes.
+The preview window never takes keyboard focus. VoiceOps remembers the foreground app at recording start and publishes exactly one guarded Cmd+V only while that PID remains in front. If focus changed or event delivery is unavailable, the final text stays on the clipboard for manual recovery.
 
 ## Development
 
@@ -203,6 +215,7 @@ apps/macos/VoiceOps/          SwiftUI and AppKit application
 apps/macos/project.yml        XcodeGen project definition
 sidecars/asr_mlx/             Final GLM-ASR service
 sidecars/fast_asr/            Streaming sherpa-onnx service
+firmware/esp32-s3-touch-amoled-1.75/  Board USB microphone firmware
 scripts/install.sh            Repeatable per-user installer
 scripts/doctor.sh             Read-only setup diagnostics
 scripts/dev_run.sh            Manual sidecar launcher

@@ -26,8 +26,10 @@ serialization.
 
 - Launch app and confirm menu bar icon appears.
 - Focus a text field in another app (Slack/Chrome/VSCode).
-- Hold Fn or one board control to start streaming; verify preview feedback updates but the focused field is not mutated yet.
-- Release Fn or the board control; verify exactly one final result is pasted.
+- Hold Fn, the display, or PWR to start streaming; verify preview feedback updates but the focused field is not mutated yet.
+- Release Fn, the display, or PWR; verify exactly one final result is pasted.
+- Press BOOT after normal startup; verify it toggles clipboard history once without starting recording or showing the green level ring.
+- Hold PWR while pressing BOOT; verify the clipboard toggle does not release the active F13 recording gesture.
 - Confirm no overlay or focus change occurs during Fn hold.
 - If Accessibility is disabled, verify text is copied to clipboard and no injection occurs.
 - Release immediately during startup and confirm recording does not remain stuck.

@@ -15,7 +15,7 @@
 ## 目标链路
 
 ```text
-屏幕 / PWR / BOOT 按下
+屏幕 / PWR 按下
   -> ESP32-S3 发送一次 F13 key-down
   -> VoiceOps 创建 Session，并记录当前前台应用 PID
   -> 只使用 MLX Voice Mic 录音，流式 ASR 只更新 UI
@@ -25,6 +25,10 @@
   -> 写入剪贴板并发送一次 Cmd+V
   -> 标记该 Session 已投递
   -> 剪贴板未被用户修改时，延迟恢复原内容
+
+固件运行时按 BOOT
+  -> ESP32-S3 发送一次 F14 down/up
+  -> VoiceOps 切换剪贴板历史面板
 ```
 
 必须维持的约束：
@@ -34,7 +38,7 @@
 - 流式识别只显示预览，不能写输入框。
 - 不因 AX 无法验证 Electron/WebView 内容而重试。
 - 用户切换应用后不把文字注入新应用；结果保留在剪贴板。
-- 板端自然人声不能自行触发录音，只有屏幕、PWR、BOOT 按住有效。
+- 板端自然人声不能自行触发录音，只有屏幕或 PWR 按住有效；BOOT 只切换剪贴板面板。
 
 ## 整改前后对照
 
@@ -107,11 +111,11 @@
 ### P2：设备和人工回归
 
 - [x] 代码一次只绑定一个 CoreAudio input；`system_profiler` 已识别 `MLX Voice Mic` 为 USB、单通道、24kHz。
-- [ ] 分别测试屏幕、PWR、BOOT 的按住/松开，每种触发只产生一组 F13 down/up。
+- [ ] 分别测试屏幕、PWR 的按住/松开只产生一组 F13 down/up；BOOT 单击只产生一组 F14 down/up。
 - [ ] 测试 Codex、Chrome/Safari contenteditable、飞书、TextEdit、Terminal/iTerm2、中文输入法和非 QWERTY 布局。
 - [ ] 测试识别期间切换应用、点击其他输入框、复制新内容、拔插板子以及连续快速录音。
 - [x] 日志统一携带 Session ID、状态转换、目标/当前 PID、投递所有权和最终 delivery status。
-- [x] 本次未修改板端触发/UI 代码；固件继续只在物理按住期间显示绿色圆形音量环，松开隐藏且无底部文字。
+- [x] 板端只在屏幕/PWR 按住期间显示绿色圆形音量环；BOOT 改为 F14 剪贴板面板开关，不显示音量环。
 
 ## 实施与自动验证结果
 
