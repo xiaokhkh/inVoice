@@ -1,8 +1,14 @@
 import AppKit
 import ApplicationServices
 import Carbon
+import IOKit.hid
 
 final class FnKeyMonitor {
+    private struct BoardControlState {
+        var triggerDown = false
+        var clipboardDown = false
+    }
+
     var onFnDown: (() -> Void)?
     var onFnUp: (() -> Void)?
     var onFnSpace: (() -> Void)?
@@ -18,11 +24,18 @@ final class FnKeyMonitor {
     private var isBoardClipboardDown = false
     private var isClipboardDown = false
     private var isTranslateDown = false
+    private var boardHIDManager: IOHIDManager?
+    private var boardDeviceStates: [UInt64: BoardControlState] = [:]
+    private var usesLegacyBoardEventFallback = false
     private let fnKeyCode: CGKeyCode = CGKeyCode(kVK_Function)
     // The ESP32 composite USB device emits F13 as its private PTT signal.
     private let boardTriggerKeyCode: CGKeyCode = CGKeyCode(kVK_F13)
     // BOOT emits F14 as a dedicated clipboard-panel control.
     private let boardClipboardKeyCode: CGKeyCode = CGKeyCode(kVK_F14)
+    private let boardVendorID = 0x303A
+    private let boardProductID = 0x4002
+    private let boardTriggerUsage: UInt32 = 0x68
+    private let boardClipboardUsage: UInt32 = 0x69
     private var activationKeyCode: CGKeyCode = CGKeyCode(kVK_Function)
     private var activationModifiers: UInt32 = 0
     private var clipboardKeyCode: CGKeyCode = CGKeyCode(kVK_Function)
@@ -58,6 +71,7 @@ final class FnKeyMonitor {
     }
 
     func stop() {
+        stopBoardHIDMonitor()
         if let eventTap {
             CGEvent.tapEnable(tap: eventTap, enable: false)
         }
@@ -79,6 +93,7 @@ final class FnKeyMonitor {
         isBoardClipboardDown = false
         isClipboardDown = false
         isTranslateDown = false
+        usesLegacyBoardEventFallback = false
     }
 
     func updateActivationKey(keyCode: UInt32, modifiers: UInt32) {
@@ -100,10 +115,136 @@ final class FnKeyMonitor {
     }
 
     func ensureEventTap() {
+        if boardHIDManager == nil {
+            usesLegacyBoardEventFallback = !startBoardHIDMonitor()
+        }
         guard eventTap == nil else { return }
         if !startEventTap() {
             startFallbackMonitors()
         }
+    }
+
+    private func startBoardHIDMonitor() -> Bool {
+        guard boardHIDManager == nil else { return true }
+
+        let manager = IOHIDManagerCreate(kCFAllocatorDefault,
+                                         IOOptionBits(kIOHIDOptionsTypeNone))
+        let matching: [String: Any] = [
+            kIOHIDVendorIDKey: boardVendorID,
+            kIOHIDProductIDKey: boardProductID,
+            kIOHIDPrimaryUsagePageKey: Int(kHIDPage_GenericDesktop),
+            kIOHIDPrimaryUsageKey: Int(kHIDUsage_GD_Keyboard),
+        ]
+        IOHIDManagerSetDeviceMatching(manager, matching as CFDictionary)
+
+        let deviceMatched: IOHIDDeviceCallback = { context, result, _, device in
+            guard result == kIOReturnSuccess, let context else { return }
+            let monitor = Unmanaged<FnKeyMonitor>.fromOpaque(context).takeUnretainedValue()
+            let identifier = monitor.boardIdentifier(for: device)
+            monitor.dispatchAction { [weak monitor] in
+                monitor?.boardDeviceMatched(identifier: identifier)
+            }
+        }
+        let deviceRemoved: IOHIDDeviceCallback = { context, _, _, device in
+            guard let context else { return }
+            let monitor = Unmanaged<FnKeyMonitor>.fromOpaque(context).takeUnretainedValue()
+            let identifier = monitor.boardIdentifier(for: device)
+            monitor.dispatchAction { [weak monitor] in
+                monitor?.boardDeviceRemoved(identifier: identifier)
+            }
+        }
+        let inputValue: IOHIDValueCallback = { context, result, _, value in
+            guard result == kIOReturnSuccess, let context else { return }
+            let element = IOHIDValueGetElement(value)
+            guard IOHIDElementGetUsagePage(element) == UInt32(kHIDPage_KeyboardOrKeypad) else {
+                return
+            }
+            let usage = IOHIDElementGetUsage(element)
+            let monitor = Unmanaged<FnKeyMonitor>.fromOpaque(context).takeUnretainedValue()
+            guard usage == monitor.boardTriggerUsage || usage == monitor.boardClipboardUsage else {
+                return
+            }
+            let identifier = monitor.boardIdentifier(for: IOHIDElementGetDevice(element))
+            let isDown = IOHIDValueGetIntegerValue(value) != 0
+            monitor.dispatchAction { [weak monitor] in
+                monitor?.handleBoardValue(identifier: identifier, usage: usage, isDown: isDown)
+            }
+        }
+
+        let context = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        IOHIDManagerRegisterDeviceMatchingCallback(manager, deviceMatched, context)
+        IOHIDManagerRegisterDeviceRemovalCallback(manager, deviceRemoved, context)
+        IOHIDManagerRegisterInputValueCallback(manager, inputValue, context)
+        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(),
+                                        CFRunLoopMode.commonModes.rawValue)
+        let result = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+        guard result == kIOReturnSuccess else {
+            IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(),
+                                              CFRunLoopMode.commonModes.rawValue)
+            trace("[trigger] board_hid_open_failed result=\(result)")
+            return false
+        }
+
+        boardHIDManager = manager
+        trace("[trigger] board_hid_monitor=started")
+        return true
+    }
+
+    private func stopBoardHIDMonitor() {
+        boardDeviceStates.removeAll()
+        handleBoardTriggerState(isDown: false)
+        handleBoardClipboardState(isDown: false)
+        guard let manager = boardHIDManager else { return }
+        IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(),
+                                          CFRunLoopMode.commonModes.rawValue)
+        IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+        boardHIDManager = nil
+    }
+
+    private func boardIdentifier(for device: IOHIDDevice) -> UInt64 {
+        var identifier: UInt64 = 0
+        let service = IOHIDDeviceGetService(device)
+        if service != 0,
+           IORegistryEntryGetRegistryEntryID(service, &identifier) == KERN_SUCCESS
+        {
+            return identifier
+        }
+        return UInt64(UInt(bitPattern: Unmanaged.passUnretained(device).toOpaque()))
+    }
+
+    private func boardDeviceMatched(identifier: UInt64) {
+        if boardDeviceStates[identifier] == nil {
+            boardDeviceStates[identifier] = BoardControlState()
+            trace("[trigger] board_hid_device=matched id=\(identifier)")
+        }
+    }
+
+    private func boardDeviceRemoved(identifier: UInt64) {
+        guard boardDeviceStates.removeValue(forKey: identifier) != nil else { return }
+        trace("[trigger] board_hid_device=removed id=\(identifier)")
+        publishAggregatedBoardState()
+    }
+
+    private func handleBoardValue(identifier: UInt64, usage: UInt32, isDown: Bool) {
+        var state = boardDeviceStates[identifier] ?? BoardControlState()
+        if usage == boardTriggerUsage {
+            guard state.triggerDown != isDown else { return }
+            state.triggerDown = isDown
+        } else if usage == boardClipboardUsage {
+            guard state.clipboardDown != isDown else { return }
+            state.clipboardDown = isDown
+        } else {
+            return
+        }
+        boardDeviceStates[identifier] = state
+        publishAggregatedBoardState()
+    }
+
+    private func publishAggregatedBoardState() {
+        let triggerDown = boardDeviceStates.values.contains { $0.triggerDown }
+        let clipboardDown = boardDeviceStates.values.contains { $0.clipboardDown }
+        handleBoardTriggerState(isDown: triggerDown)
+        handleBoardClipboardState(isDown: clipboardDown)
     }
 
     private func startEventTap() -> Bool {
@@ -188,15 +329,15 @@ final class FnKeyMonitor {
             }
         } else if type == .keyDown {
             if keyCode == Int64(boardTriggerKeyCode) {
-                let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-                if !isRepeat {
+                if usesLegacyBoardEventFallback,
+                   event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
                     handleBoardTriggerState(isDown: true)
                 }
                 return nil
             }
             if keyCode == Int64(boardClipboardKeyCode) {
-                let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-                if !isRepeat {
+                if usesLegacyBoardEventFallback,
+                   event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
                     handleBoardClipboardState(isDown: true)
                 }
                 return nil
@@ -244,11 +385,15 @@ final class FnKeyMonitor {
             }
         } else if type == .keyUp {
             if keyCode == Int64(boardTriggerKeyCode) {
-                handleBoardTriggerState(isDown: false)
+                if usesLegacyBoardEventFallback {
+                    handleBoardTriggerState(isDown: false)
+                }
                 return nil
             }
             if keyCode == Int64(boardClipboardKeyCode) {
-                handleBoardClipboardState(isDown: false)
+                if usesLegacyBoardEventFallback {
+                    handleBoardClipboardState(isDown: false)
+                }
                 return nil
             }
             if !clipboardUsesFn, isClipboardDown, keyCode == Int64(clipboardKeyCode) {
@@ -293,13 +438,13 @@ final class FnKeyMonitor {
             }
         case .keyDown:
             if event.keyCode == boardTriggerKeyCode {
-                if !event.isARepeat {
+                if usesLegacyBoardEventFallback, !event.isARepeat {
                     handleBoardTriggerState(isDown: true)
                 }
                 return true
             }
             if event.keyCode == boardClipboardKeyCode {
-                if !event.isARepeat {
+                if usesLegacyBoardEventFallback, !event.isARepeat {
                     handleBoardClipboardState(isDown: true)
                 }
                 return true
@@ -345,11 +490,15 @@ final class FnKeyMonitor {
             return true
         case .keyUp:
             if event.keyCode == boardTriggerKeyCode {
-                handleBoardTriggerState(isDown: false)
+                if usesLegacyBoardEventFallback {
+                    handleBoardTriggerState(isDown: false)
+                }
                 return true
             }
             if event.keyCode == boardClipboardKeyCode {
-                handleBoardClipboardState(isDown: false)
+                if usesLegacyBoardEventFallback {
+                    handleBoardClipboardState(isDown: false)
+                }
                 return true
             }
             if !clipboardUsesFn, isClipboardDown, event.keyCode == clipboardKeyCode {

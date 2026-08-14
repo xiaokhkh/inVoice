@@ -86,7 +86,7 @@ static inline void notify_event(uac_device_event_t event)
 
 esp_err_t uac_device_send_controls(bool voice_pressed, bool clipboard_pressed)
 {
-    if (s_uac_device == NULL || !tud_mounted() || !tud_hid_ready()) {
+    if (s_uac_device == NULL || !tud_mounted() || !tud_hid_n_ready(0)) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -98,18 +98,19 @@ esp_err_t uac_device_send_controls(bool voice_pressed, bool clipboard_pressed)
     if (clipboard_pressed) {
         keycodes[key_count++] = HID_KEY_F14;
     }
-    return tud_hid_keyboard_report(0, 0, keycodes) ? ESP_OK : ESP_FAIL;
+    return tud_hid_n_keyboard_report(0, 0, 0, keycodes) ? ESP_OK : ESP_FAIL;
 }
 
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id,
                                hid_report_type_t report_type, uint8_t *buffer,
                                uint16_t requested_length)
 {
-    (void)instance;
-    (void)report_id;
-    (void)report_type;
-    (void)buffer;
-    (void)requested_length;
+    if (instance == 1 && s_uac_device != NULL &&
+        s_uac_device->user_cfg.hid_get_report_cb != NULL) {
+        return s_uac_device->user_cfg.hid_get_report_cb(
+            report_id, (uint8_t)report_type, buffer, requested_length,
+            s_uac_device->user_cfg.cb_ctx);
+    }
     return 0;
 }
 
@@ -117,11 +118,12 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
                            hid_report_type_t report_type, uint8_t const *buffer,
                            uint16_t buffer_size)
 {
-    (void)instance;
-    (void)report_id;
-    (void)report_type;
-    (void)buffer;
-    (void)buffer_size;
+    if (instance == 1 && s_uac_device != NULL &&
+        s_uac_device->user_cfg.hid_set_report_cb != NULL) {
+        s_uac_device->user_cfg.hid_set_report_cb(
+            report_id, (uint8_t)report_type, buffer, buffer_size,
+            s_uac_device->user_cfg.cb_ctx);
+    }
 }
 
 static esp_err_t usb_phy_init(void)
@@ -559,6 +561,8 @@ esp_err_t uac_device_init(uac_device_config_t *config)
     s_uac_device->user_cfg.set_mute_cb = config->set_mute_cb;
     s_uac_device->user_cfg.set_volume_cb = config->set_volume_cb;
     s_uac_device->user_cfg.event_cb = config->event_cb;
+    s_uac_device->user_cfg.hid_get_report_cb = config->hid_get_report_cb;
+    s_uac_device->user_cfg.hid_set_report_cb = config->hid_set_report_cb;
     s_uac_device->current_sample_rate = DEFAULT_SAMPLE_RATE;
     s_uac_device->mic_buf_write = s_uac_device->mic_buf1;
     s_uac_device->mic_buf_read = s_uac_device->mic_buf2;

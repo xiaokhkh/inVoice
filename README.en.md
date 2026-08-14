@@ -75,7 +75,9 @@ Permission requests are only triggered by the corresponding buttons or a voice a
 The repository includes firmware for the Waveshare
 ESP32-S3-Touch-AMOLED-1.75. It enumerates as the `MLX Voice Mic` USB Audio + HID
 composite device. Hold the display or PWR for push-to-talk; press BOOT while the
-firmware is running to toggle VoiceOps clipboard history.
+firmware is running to toggle VoiceOps clipboard history. Firmware updates use
+an independent HID interface over the same Type-C cable: no Wi-Fi, extra 5-wire
+connection, or update button press is required after the one-time installation.
 
 Source and flashing instructions are under
 [firmware/esp32-s3-touch-amoled-1.75](firmware/esp32-s3-touch-amoled-1.75/README.md).

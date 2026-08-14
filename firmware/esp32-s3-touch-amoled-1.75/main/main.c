@@ -10,9 +10,11 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "jam_ui.h"
+#include "ota_update.h"
 #include "usb_device_uac.h"
 
 #define PWR_BUTTON_PIN IO_EXPANDER_PIN_NUM_4
+#define CONTROL_STATE_SYNC_MS 250
 
 static const char *TAG = "mlx_voice_mic";
 static atomic_bool s_ui_ready;
@@ -108,6 +110,19 @@ static bool set_clipboard_pressed(bool pressed, bool force)
     }
     xSemaphoreGive(s_trigger_mutex);
     return ret == ESP_OK || force;
+}
+
+static void sync_control_state(void)
+{
+    if (!atomic_load(&s_usb_mounted) ||
+        xSemaphoreTake(s_trigger_mutex, pdMS_TO_TICKS(20)) != pdTRUE) {
+        return;
+    }
+    (void)uac_device_send_controls(
+        atomic_load(&s_trigger_sources) != 0,
+        atomic_load(&s_clipboard_pressed)
+    );
+    xSemaphoreGive(s_trigger_mutex);
 }
 
 static void touch_trigger(bool pressed)
@@ -212,6 +227,7 @@ static void physical_button_task(void *context)
         expander = NULL;
     }
 
+    TickType_t last_control_sync = xTaskGetTickCount();
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(20));
 
@@ -231,6 +247,12 @@ static void physical_button_task(void *context)
                 }
             }
         }
+
+        const TickType_t now = xTaskGetTickCount();
+        if (now - last_control_sync >= pdMS_TO_TICKS(CONTROL_STATE_SYNC_MS)) {
+            sync_control_state();
+            last_control_sync = now;
+        }
     }
 }
 
@@ -243,6 +265,7 @@ void app_main(void)
     s_trigger_mutex = xSemaphoreCreateMutex();
     ESP_ERROR_CHECK(s_trigger_mutex != NULL ? ESP_OK : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(audio_power_init());
+    ESP_ERROR_CHECK(ota_update_init());
 
     lv_display_t *display = bsp_display_start();
     ESP_ERROR_CHECK(display != NULL ? ESP_OK : ESP_FAIL);
@@ -263,6 +286,8 @@ void app_main(void)
         .set_mute_cb = uac_mute_cb,
         .set_volume_cb = uac_volume_cb,
         .event_cb = uac_event_cb,
+        .hid_get_report_cb = ota_update_get_report,
+        .hid_set_report_cb = ota_update_set_report,
         .cb_ctx = NULL,
     };
     ret = uac_device_init(&usb_config);
@@ -270,6 +295,11 @@ void app_main(void)
         jam_ui_set_error("USB AUDIO ERROR");
         ESP_LOGE(TAG, "USB UAC init failed: %s", esp_err_to_name(ret));
         return;
+    }
+
+    ret = ota_update_confirm_running_image();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Unable to confirm OTA image: %s", esp_err_to_name(ret));
     }
 
     xTaskCreate(physical_button_task, "physical_buttons", 3072, NULL, 4, NULL);

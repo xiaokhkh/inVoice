@@ -18,6 +18,16 @@ typedef esp_err_t (*uac_output_cb_t)(uint8_t *buf, size_t len, void *cb_ctx);
 typedef esp_err_t (*uac_input_cb_t)(uint8_t *buf, size_t len, size_t *bytes_read, void *cb_ctx);
 typedef void (*uac_set_mute_cb_t)(uint32_t mute, void *cb_ctx);
 typedef void (*uac_set_volume_cb_t)(uint32_t volume, void *cb_ctx);
+typedef uint16_t (*uac_hid_get_report_cb_t)(uint8_t report_id,
+                                            uint8_t report_type,
+                                            uint8_t *buffer,
+                                            uint16_t requested_length,
+                                            void *cb_ctx);
+typedef void (*uac_hid_set_report_cb_t)(uint8_t report_id,
+                                        uint8_t report_type,
+                                        const uint8_t *buffer,
+                                        uint16_t buffer_size,
+                                        void *cb_ctx);
 
 typedef enum {
     UAC_DEVICE_EVENT_MOUNTED,
@@ -41,6 +51,8 @@ typedef struct  {
     uac_set_mute_cb_t set_mute_cb;               /*!< callback function for set mute, if NULL, the set mute request will be ignored */
     uac_set_volume_cb_t set_volume_cb;           /*!< callback function for set volume, if NULL, the set volume request will be ignored */
     uac_event_cb_t event_cb;                     /*!< callback for USB and microphone interface state */
+    uac_hid_get_report_cb_t hid_get_report_cb;   /*!< vendor HID feature report reader */
+    uac_hid_set_report_cb_t hid_set_report_cb;   /*!< vendor HID feature report writer */
     void *cb_ctx;                                /*!< callback context, for user specific usage */
 #if CONFIG_USB_DEVICE_UAC_AS_PART
     int spk_itf_num;                             /*!< If CONFIG_USB_DEVICE_UAC_AS_PART is enabled, you need to provide the speaker interface number */

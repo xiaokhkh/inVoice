@@ -30,6 +30,15 @@ serialization.
 - Release Fn, the display, or PWR; verify exactly one final result is pasted.
 - Press BOOT after normal startup; verify it toggles clipboard history once without starting recording or showing the green level ring.
 - Hold PWR while pressing BOOT; verify the clipboard toggle does not release the active F13 recording gesture.
+
+## Dock and hot-plug regression
+
+- Connect the board through the dock without touching it; verify no recording starts.
+- Hold screen or PWR, then unplug the dock; verify VoiceOps ends the recording once and returns to idle.
+- Reconnect the dock without pressing a control; verify no stale F13/F14 state is replayed.
+- Hold and release screen/PWR through the dock; verify exactly one recording Session is created and ended.
+- Suspend and resume the dock while idle; verify VoiceOps remains idle.
+- Send F13/F14 from a different keyboard; verify it cannot create a board recording or open the board clipboard panel.
 - Confirm no overlay or focus change occurs during Fn hold.
 - If Accessibility is disabled, verify text is copied to clipboard and no injection occurs.
 - Release immediately during startup and confirm recording does not remain stuck.

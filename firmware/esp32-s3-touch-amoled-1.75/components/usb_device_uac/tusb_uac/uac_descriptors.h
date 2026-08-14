@@ -42,6 +42,7 @@ enum {
     ITF_NUM_AUDIO_STREAMING_MIC,
 #endif // MIC_CHANNEL_NUM
     ITF_NUM_HID_TRIGGER,
+    ITF_NUM_HID_OTA,
     ITF_NUM_TOTAL
 };
 #endif

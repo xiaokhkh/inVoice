@@ -26,6 +26,7 @@
 
 #include "tusb.h"
 #include "uac_descriptors.h"
+#include "voiceops_ota_protocol.h"
 
 //--------------------------------------------------------------------+
 // Device Descriptors
@@ -63,20 +64,34 @@ uint8_t const *tud_descriptor_device_cb(void)
 //--------------------------------------------------------------------+
 // Configuration Descriptor
 //--------------------------------------------------------------------+
-#define CONFIG_TOTAL_LEN        (TUD_CONFIG_DESC_LEN + CFG_TUD_AUDIO * TUD_AUDIO_DEVICE_DESC_LEN + TUD_HID_DESC_LEN)
+#define CONFIG_TOTAL_LEN        (TUD_CONFIG_DESC_LEN + CFG_TUD_AUDIO * TUD_AUDIO_DEVICE_DESC_LEN + 2 * TUD_HID_DESC_LEN)
 #define EPNUM_AUDIO_OUT   0x01
 #define EPNUM_AUDIO_FB    0x81
 #define EPNUM_AUDIO_IN    0x82
 #define EPNUM_HID_IN      0x83
+#define EPNUM_HID_OTA_IN  0x84
+#define HID_KEYBOARD_EP_SIZE 8
 
 static uint8_t const desc_hid_report[] = {
     TUD_HID_REPORT_DESC_KEYBOARD()
 };
 
+static uint8_t const desc_hid_ota_report[] = {
+    0x06, 0x00, 0xff,       // Usage Page (Vendor Defined 0xff00)
+    0x09, 0x01,             // Usage (1)
+    0xa1, 0x01,             // Collection (Application)
+    0x15, 0x00,             // Logical Minimum (0)
+    0x26, 0xff, 0x00,       // Logical Maximum (255)
+    0x75, 0x08,             // Report Size (8 bits)
+    0x95, VOICEOPS_OTA_REPORT_SIZE, // Report Count (64 bytes)
+    0x09, 0x01,             // Usage (1)
+    0xb1, 0x02,             // Feature (Data, Variable, Absolute)
+    0xc0,                   // End Collection
+};
+
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
 {
-    (void)instance;
-    return desc_hid_report;
+    return instance == 0 ? desc_hid_report : desc_hid_ota_report;
 }
 
 uint8_t const desc_configuration[] = {
@@ -86,7 +101,11 @@ uint8_t const desc_configuration[] = {
     TUD_AUDIO_DESCRIPTOR(ITF_NUM_AUDIO_CONTROL, 4, EPNUM_AUDIO_OUT, EPNUM_AUDIO_IN, EPNUM_AUDIO_FB),
     // A dedicated keyboard interface emits VoiceOps F13/F14 control reports.
     TUD_HID_DESCRIPTOR(ITF_NUM_HID_TRIGGER, 6, HID_ITF_PROTOCOL_KEYBOARD,
-                       sizeof(desc_hid_report), EPNUM_HID_IN, CFG_TUD_HID_EP_BUFSIZE, 10),
+                       sizeof(desc_hid_report), EPNUM_HID_IN, HID_KEYBOARD_EP_SIZE, 10),
+    // USB-only updater; this interface never emits keyboard reports.
+    TUD_HID_DESCRIPTOR(ITF_NUM_HID_OTA, 7, HID_ITF_PROTOCOL_NONE,
+                       sizeof(desc_hid_ota_report), EPNUM_HID_OTA_IN,
+                       VOICEOPS_OTA_REPORT_SIZE, 10),
 };
 
 // Invoked when received GET CONFIGURATION DESCRIPTOR
@@ -116,6 +135,7 @@ char const *string_desc_arr [] = {
     CONFIG_UAC_TUSB_PRODUCT,         // Mic Interface
 #endif
     "Voice Controls",               // HID push-to-talk and clipboard controls
+    "Firmware Update",              // Vendor HID feature-report OTA interface
 };
 
 static uint16_t _desc_str[32];

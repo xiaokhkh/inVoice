@@ -24,15 +24,24 @@ The firmware disables the AXP2101 PWR-key long-press shutdown action so a long
 dictation cannot accidentally power the board off.
 
 USB is exposed as a composite device: **MLX Voice Mic** (24 kHz, mono, 16-bit
-PCM) plus a keyboard HID interface. F13 is the private push-to-talk signal and
-F14 is the dedicated clipboard-panel signal. The matching `mlx-voiceops` build
-consumes both keys and converts microphone audio to its 16 kHz ASR format.
+PCM), a keyboard HID interface, and an independent vendor HID firmware-update
+interface. F13 is the private push-to-talk signal and F14 is the dedicated
+clipboard-panel signal. The updater never emits keyboard reports. The matching
+`mlx-voiceops` build consumes both keys and converts microphone audio to its 16
+kHz ASR format.
+
+For dock and hot-plug safety, the macOS host reads those controls only from the
+board keyboard interface with VID/PID `0x303A:0x4002`; unrelated keyboards
+cannot start a board recording. The firmware also republishes the complete
+pressed/released state every 250 ms. Device removal forces an immediate release
+on the host, while the periodic absolute report repairs a release lost during a
+dock suspend/resume cycle.
 
 ## Important
 
-The partition table deliberately keeps `assets` at `0x800000` with an 8 MB
-size. Normal firmware flashing must not erase the entire chip and must not write
-that partition. A full Xiaozhi backup should be kept before flashing.
+The dual-slot partition table deliberately keeps `assets` at `0x800000` with
+an 8 MB size. Normal firmware flashing must not erase the entire chip and must
+not write that partition. A full Xiaozhi backup should be kept before flashing.
 
 ## Build
 
@@ -47,34 +56,44 @@ The application image is generated at `build/mlx_voice_mic.bin`. The project
 defaults deliberately disable the ESP32-S3 USB Serial/JTAG console so the same
 native USB pins can expose the UAC microphone and HID keyboard interfaces.
 
-## Flash without deleting Jam assets
+## One-time OTA installation without deleting Jam assets
 
-Never run `erase-flash`. A normal project flash writes the bootloader,
-partition table, and application but leaves the `assets` partition intact:
+No 5-wire adapter, Wi-Fi, or network setup is needed. The first installation
+changes the partition table, so use the ESP32-S3 ROM downloader once over the
+same USB Type-C cable. Hold BOOT while reconnecting USB, release it after the
+ROM device appears, then run:
 
 ```bash
 idf.py -p /dev/cu.usbmodemXXXX flash
 ```
 
-For an application-only update:
+This writes the bootloader, dual-slot partition table, initial OTA metadata,
+and slot `ota_0`; it leaves the Jam `assets` partition untouched. Never run
+`erase-flash`.
+
+## Later updates: Type-C only, no button
+
+After the one-time installation, leave the board running normally and execute:
 
 ```bash
-python3 -m esptool --chip esp32s3 \
-  --port /dev/cu.usbmodemXXXX \
-  --before no-reset --after watchdog-reset \
-  write-flash 0x10000 build/mlx_voice_mic.bin
+./scripts/update_esp32_firmware.sh
 ```
 
-When the microphone firmware is already running, it exposes only USB Audio and
-HID, not a serial port. Hold BOOT while reconnecting USB to enter the ROM
-download mode, then release BOOT before flashing.
+The host validates the ESP image and CRC, writes the inactive OTA slot, asks the
+board to validate and atomically select it, and restarts the microphone. No
+BOOT/Fn/PWR/screen press is needed. BOOT continues to open the clipboard panel
+during normal operation; it is not an OTA trigger.
+
+Protocol and recovery details are in
+[`docs/ESP32_USB_OTA_PROTOCOL.md`](../../docs/ESP32_USB_OTA_PROTOCOL.md).
 
 ## Host integration
 
 The macOS implementation lives in these files:
 
-- `apps/macos/VoiceOps/Services/FnKeyMonitor.swift`: treats board F13 as PTT and
-  F14 as the clipboard-panel toggle.
+- `apps/macos/VoiceOps/Services/FnKeyMonitor.swift`: binds directly to the board
+  keyboard VID/PID, aggregates hot-plug state per device, treats F13 as PTT and
+  F14 as the clipboard-panel toggle, and forces release on removal.
 - `apps/macos/VoiceOps/Services/AudioCaptureService.swift`: prefers
   `MLX Voice Mic` and converts its 24 kHz input for the 16 kHz recognizers.
 - `apps/macos/VoiceOps/Services/FnSessionController.swift`: owns the recording

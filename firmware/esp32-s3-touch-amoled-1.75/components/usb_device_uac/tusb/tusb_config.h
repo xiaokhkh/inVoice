@@ -37,8 +37,8 @@ extern "C" {
 
 // Expose a keyboard HID interface beside UAC. F13 is VoiceOps push-to-talk and
 // F14 toggles its clipboard panel; normal keyboard Fn handling stays on host.
-#define CFG_TUD_HID             1
-#define CFG_TUD_HID_EP_BUFSIZE  8
+#define CFG_TUD_HID             2
+#define CFG_TUD_HID_EP_BUFSIZE  64
 
 //--------------------------------------------------------------------+
 // Board Specific Configuration

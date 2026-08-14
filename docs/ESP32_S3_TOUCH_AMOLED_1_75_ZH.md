@@ -50,7 +50,19 @@ firmware/esp32-s3-touch-amoled-1.75/
 - VID/PID：`0x303A / 0x4002`
 - 音频：24 kHz、单声道、16-bit PCM
 - HID：F13 为语音 PTT，F14 为剪贴板面板开关
+- OTA：独立厂商 HID，通过现有 Type-C 传输，不产生键盘事件
 - 麦克风：板载 ES7210，模拟增益 36 dB
+
+## 扩展坞与热插拔保护
+
+- macOS 不再把系统里的任意 F13/F14 当成板端输入，而是通过 IOKit 直接
+  匹配 `0x303A / 0x4002` 的键盘 HID 接口。
+- 每个已枚举板端设备独立保存按下状态；扩展坞重枚举或设备拔出时删除该
+  设备，并立即强制结束仍在进行的板端输入。
+- 固件每 250 ms 重发一次 F13/F14 的完整绝对状态。扩展坞休眠/恢复期间
+  即使丢失一次松开报告，也会在链路恢复后自动纠正，不会一直停留在输入状态。
+- 系统 Fn 快捷键仍按原逻辑工作；其他键盘或扩展坞产生的 F13/F14 不会
+  触发板端录音。
 
 ## 板端 UI 行为
 
@@ -122,7 +134,8 @@ xcodebuild -project apps/macos/VoiceOps.xcodeproj \
 
 VoiceOps 需要三项 macOS 权限：
 
-- 输入监控：接收 Fn，以及板端 F13/F14。
+- 输入监控：接收系统 Fn；板端 F13/F14 由绑定 VID/PID 的 IOKit HID
+  监控独立接收。
 - 辅助功能：向当前目标应用发送合成 Cmd+V；最终方案不再强制恢复 AX 焦点。
 - 麦克风：采集 `MLX Voice Mic`。
 
@@ -133,7 +146,17 @@ VoiceOps 需要三项 macOS 权限：
 - 仅适用于 Waveshare ESP32-S3-Touch-AMOLED-1.75，不能刷到 1.75C。
 - 不要运行 `erase-flash`，否则会删除保留的 Jam assets。
 - Jam assets 位于 Flash `0x800000-0xFFFFFF`。
-- 麦克风固件正常运行时不暴露烧录串口；更新前需要按住 BOOT 重新连接 USB 进入 ROM 下载模式。
+- OTA 使用 `ota_0/ota_1` 双应用分区，Jam assets 的地址和大小不变。
+- 不需要 5 线下载器，不需要 Wi-Fi；主机通过同一根 Type-C 线上的独立厂商 HID 更新。
+- 由于首次安装需要写入新分区表，只在这一次按住 BOOT 重新连接 USB 进入 ESP32-S3 ROM 下载模式。
+- 首次安装完成后执行 `./scripts/update_esp32_firmware.sh` 即可自动校验、写入非活动槽并重启，不再按 BOOT/Fn/PWR/屏幕。
+- 正常运行时 BOOT 始终只负责剪贴板面板，不再承担固件更新触发。
+
+主机协议、分区地址、CRC 和回滚流程见：
+
+```text
+docs/ESP32_USB_OTA_PROTOCOL.md
+```
 
 ## 当前仍需关注
 
@@ -141,4 +164,4 @@ VoiceOps 需要三项 macOS 权限：
    Terminal 等输入框完成人工回归，并测试识别期间切换应用的 copy-only 行为。
 2. 项目默认提示词面向“中文语音转自然英文”，所以中文 ASR 结果可能被本地 LLM 改成英文；若需要中文原样输入，应在 Preferences 调整语音提示词或让路由直接使用 ASR 文本。
 3. Jam GIF 本体没有复制进仓库，固件继续读取开发板已有的 `assets` 分区；全片擦除后必须从备份恢复。
-4. BOOT 在固件运行时用于剪贴板面板；上电或重连时按住 BOOT 仍会进入 ROM 下载模式。
+4. BOOT 在固件运行时只用于剪贴板面板；仅首次安装或 OTA 已损坏的恢复场景才需要在重连时按住 BOOT 进入 ROM 下载模式。

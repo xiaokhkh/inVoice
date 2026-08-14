@@ -4,12 +4,14 @@ idf_component_register(
         "audio_input.c"
         "asset_store.c"
         "jam_ui.c"
+        "ota_update.c"
         "gif/gifdec.c"
     INCLUDE_DIRS "." "gif"
     REQUIRES
         esp32_s3_touch_amoled_1_75
         usb_device_uac
         esp_partition
+        app_update
         esp_timer
         esp_driver_gpio
         esp_driver_i2c
