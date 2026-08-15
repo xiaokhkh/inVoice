@@ -31,8 +31,8 @@
   -> inVoice 切换剪贴板历史面板
 
 650 ms 内短按屏幕两次
-  -> ESP32-S3 发送一次 F15 down/up
-  -> Codex 位于前台且语音链路空闲时发送一次 Return
+  -> ESP32-S3 直接发送一次标准 HID Enter down/up
+  -> 当前前台应用按普通 Return 处理
 ```
 
 必须维持的约束：
@@ -43,7 +43,7 @@
 - 不因 AX 无法验证 Electron/WebView 内容而重试。
 - 用户切换应用后不把文字注入新应用；结果保留在剪贴板。
 - 板端自然人声不能自行触发录音，只有屏幕或 PWR 按住有效；BOOT 单击只切换
-  剪贴板面板，屏幕短按一次无动作、双击只提交 Codex。
+  剪贴板面板，屏幕短按一次无动作、双击发送一次通用 Return。
 
 ## 整改前后对照
 
@@ -116,7 +116,7 @@
 ### P2：设备和人工回归
 
 - [x] 代码一次只绑定一个 CoreAudio input；`system_profiler` 已识别 `MLX Voice Mic` 为 USB、单通道、24kHz。
-- [ ] 分别测试屏幕、PWR 的按住/松开只产生一组 F13 down/up；BOOT 单击只产生一组 F14 down/up；屏幕双击只产生一组 F15 down/up。
+- [ ] 分别测试屏幕、PWR 的按住/松开只产生一组 F13 down/up；BOOT 单击只产生一组 F14 down/up；屏幕双击只产生一组 Enter down/up。
 - [ ] 测试 Codex、Chrome/Safari contenteditable、飞书、TextEdit、Terminal/iTerm2、中文输入法和非 QWERTY 布局。
 - [ ] 测试识别期间切换应用、点击其他输入框、复制新内容、拔插板子以及连续快速录音。
 - [x] 日志统一携带 Session ID、状态转换、目标/当前 PID、投递所有权和最终 delivery status。
@@ -124,7 +124,7 @@
 
 ## 实施与自动验证结果
 
-- 新增独立 `VoiceOpsCore` Swift Package，当前 12 个自动化测试全部通过。
+- 新增独立 `VoiceOpsCore` Swift Package，当前 11 个自动化测试全部通过。
 - inVoice Debug、Release 构建通过，Release app 签名验证通过。
 - 已更新 `/Users/aminer/Applications/inVoice.app`，系统当前只运行一个实例。
 - `scripts/doctor.sh` 对 sidecar、模型、Ollama、应用签名和资源路径检查为 0 警告。

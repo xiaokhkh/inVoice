@@ -36,8 +36,8 @@ extern "C" {
 #include "tusb_config_uac.h"
 
 // Expose a keyboard HID interface beside UAC. F13 is VoiceOps push-to-talk and
-// F14 toggles its clipboard panel and F15 submits Codex input; normal keyboard
-// Fn handling stays on host.
+// F14 toggles its clipboard panel and a screen double-tap emits standard Enter;
+// normal keyboard Fn handling stays on host.
 #define CFG_TUD_HID             2
 #define CFG_TUD_HID_EP_BUFSIZE  64
 

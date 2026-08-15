@@ -73,12 +73,13 @@ esp_err_t uac_device_init(uac_device_config_t *config);
 /**
  * Send the complete VoiceOps HID control state.
  *
- * F13 represents push-to-talk, F14 represents the clipboard panel, and F15
- * represents a Codex submit pulse. Sending every state in one report prevents
- * one overlapping control from releasing another.
+ * F13 represents push-to-talk, F14 represents the clipboard panel, and the
+ * standard Enter usage represents a screen-double-tap Return pulse. Sending
+ * every state in one report prevents one overlapping control from releasing
+ * another.
  */
 esp_err_t uac_device_send_controls(bool voice_pressed, bool clipboard_pressed,
-                                   bool submit_pressed);
+                                   bool return_pressed);
 
 #ifdef __cplusplus
 }

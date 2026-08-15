@@ -39,13 +39,13 @@ dependencies and download models.
 | --- | --- | --- | --- |
 | Voice input | Hold `Fn`, then release | Hold the display or PWR, then release | Preview, final recognition, optional rewrite, and one insertion |
 | Clipboard history | `Command + Fn` | Press BOOT once | Toggle the searchable clipboard panel |
-| Submit Codex input | Press `Return` | Double-tap the display | Send once, only when Codex is frontmost and dictation is idle |
+| Submit current input | Press `Return` | Double-tap the display | Send one standard Return to the frontmost application |
 | Translate selection | `Command + Option + T` | — | Open the streaming local translation panel |
 | Settings | `Command + Option + P` | — | Open setup, permissions, models, and prompts |
 
 When the board is connected, every new recording prefers its USB microphone.
 After it is unplugged, the next recording transparently falls back to the
-current macOS input. Board F13/F14/F15 reports are accepted only from its exact USB
+current macOS input. Board F13/F14 reports are accepted only from its exact USB
 VID/PID, so docks and unrelated keyboards cannot create a second recording.
 
 ## Supported microphone hardware
@@ -60,7 +60,7 @@ ESP32-S3-Touch-AMOLED-1.75**, standard model **SKU 31261**. This is the original
 | SoC | `ESP32-S3R8`, dual-core LX7 up to 240 MHz | USB Audio, HID, OTA, UI, and audio capture |
 | Memory | 8 MB PSRAM + external 16 MB Flash | Dual OTA slots plus preserved Jam assets |
 | AMOLED | 1.75 inch, 466×466, `CO5300` over QSPI | Jam animation and full-dial level ring |
-| Touch | `CST9217` over I2C | Hold-to-talk and double-tap Codex submit |
+| Touch | `CST9217` over I2C | Hold-to-talk and double-tap Return |
 | Audio ADC | `ES7210`, dual onboard microphones | 24 kHz mono, 16-bit USB microphone stream |
 | Power / I/O | `AXP2101` + `TCA9554` | PWR input, power control, and GPIO expansion |
 | Sensors | `QMI8658` IMU + `PCF85063` RTC | Present on the board; not required by inVoice |
@@ -79,15 +79,16 @@ and the [ESP32-S3 datasheet](https://www.espressif.com/sites/default/files/docum
 - Hold the display or PWR to send the private F13 push-to-talk state.
 - Release to finish the same recording. Natural speech never starts a session.
 - A single short display tap does nothing. Double-tap the display within 650 ms
-  to send one private F15 submit pulse; the host converts it to Return only when
-  Codex is frontmost and no voice Session is recording or processing.
+  to send one standard USB HID Return directly to the frontmost application.
+  This works without app-specific host translation or Accessibility permission.
 - While held, the preserved Jam character switches to its thinking state and a
   speech-sensitive green ring runs around the full display.
 - Press BOOT during normal operation to send F14 and toggle clipboard history.
 - The board enumerates as `MLX Voice Mic`: USB Audio + keyboard HID + an
   independent vendor HID updater, VID/PID `0x303A:0x4002`.
-- A 100 ms stable-input filter, periodic absolute HID state, and forced release
-  on removal protect the workflow across USB docks and hot-plug events.
+- A 40 ms touch filter recognizes quick taps; PWR and BOOT retain their 100 ms
+  filter. Periodic absolute HID state and forced release protect the workflow
+  across USB docks and hot-plug events.
 
 The original Xiaozhi Jam GIF resources stay in the Flash `assets` partition at
 `0x800000`; the firmware reads them in place and does not replace them.

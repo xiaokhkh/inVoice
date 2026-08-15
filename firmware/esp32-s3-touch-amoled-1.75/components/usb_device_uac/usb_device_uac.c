@@ -85,7 +85,7 @@ static inline void notify_event(uac_device_event_t event)
 }
 
 esp_err_t uac_device_send_controls(bool voice_pressed, bool clipboard_pressed,
-                                   bool submit_pressed)
+                                   bool return_pressed)
 {
     if (s_uac_device == NULL || !tud_mounted() || !tud_hid_n_ready(0)) {
         return ESP_ERR_INVALID_STATE;
@@ -99,8 +99,8 @@ esp_err_t uac_device_send_controls(bool voice_pressed, bool clipboard_pressed,
     if (clipboard_pressed) {
         keycodes[key_count++] = HID_KEY_F14;
     }
-    if (submit_pressed) {
-        keycodes[key_count++] = HID_KEY_F15;
+    if (return_pressed) {
+        keycodes[key_count++] = HID_KEY_ENTER;
     }
     return tud_hid_n_keyboard_report(0, 0, 0, keycodes) ? ESP_OK : ESP_FAIL;
 }

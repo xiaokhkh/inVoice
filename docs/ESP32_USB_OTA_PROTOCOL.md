@@ -23,11 +23,12 @@ Subsequent updates write only the inactive application slot.
 The composite USB device exposes three independent functions:
 
 - UAC microphone: 24 kHz, mono, 16-bit PCM;
-- keyboard HID: F13 push-to-talk, F14 clipboard panel, and F15 Codex submit;
+- keyboard HID: F13 push-to-talk, F14 clipboard panel, and standard Enter for a screen-double-tap Return;
 - vendor HID: usage page `0xFF00`, usage `0x0001`, 64-byte feature reports.
 
 The host binds keyboard controls to the same board VID/PID rather than treating
-global F13/F14/F15 events as trusted input. Keyboard reports carry absolute state
+global F13/F14 events as trusted input. The standard Return is intentionally
+left to macOS as an ordinary keyboard event. Keyboard reports carry absolute state
 and are refreshed every 250 ms; host-side device removal clears all pressed
 state. This keeps dock suspend/resume and hot unplug from leaving dictation
 latched on.

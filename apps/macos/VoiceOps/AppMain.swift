@@ -32,14 +32,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var preferencesHotKey: HotKeyService?
     private let fnMonitor = FnKeyMonitor()
     private let fnSession = FnSessionController()
-    private let codexSubmitter = CodexSubmitService()
     private let clipboardObserver = ClipboardObserver.shared
     private let clipboardPanel = ClipboardHistoryPanelController.shared
     private let translatePanel = SelectionTranslationPanelController.shared
     private let sidecarLauncher = SidecarLauncher.shared
     private let selectionCapture = SelectionCaptureService.shared
     private var fnHoldActive = false
-    private var voiceSessionBusy = false
     private var cancellables = Set<AnyCancellable>()
 
     private let pipeline = PipelineController()
@@ -206,9 +204,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fnMonitor.onClipboardToggle = { [weak self] in
             self?.clipboardPanel.toggle()
         }
-        fnMonitor.onBoardSubmit = { [weak self] in
-            self?.handleBoardSubmit()
-        }
         fnMonitor.onTranslateSelection = { [weak self] in
             self?.handleTranslateSelection()
         }
@@ -248,21 +243,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fnSession.endSession()
     }
 
-    private func handleBoardSubmit() {
-        guard !voiceSessionBusy else {
-            NSLog("[codex_submit] ignored reason=voice_session_busy")
-            return
-        }
-        clipboardPanel.hide()
-        panel?.hide()
-        switch codexSubmitter.submitIfCodexFrontmost() {
-        case .submitted, .ignoredDifferentApp, .eventCreationFailed:
-            break
-        case .deniedAccessibility:
-            openPreferences()
-        }
-    }
-
     private func handleTranslateSelection() {
         clipboardPanel.hide()
         panel?.hide()
@@ -282,18 +262,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateStatusIndicator(_ state: FnSessionController.IndicatorState) {
         switch state {
         case .idle:
-            voiceSessionBusy = false
             previewModel.state = .idle
             setStatusTitle(statusIdleTitle)
             if !fnHoldActive {
                 previewPanel?.hide()
             }
         case .recording:
-            voiceSessionBusy = true
             previewModel.state = .recording
             setStatusTitle("inVoice •")
         case .processing:
-            voiceSessionBusy = true
             previewModel.state = .processing
             setStatusTitle("inVoice …")
         }
