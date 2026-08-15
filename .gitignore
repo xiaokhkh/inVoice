@@ -12,3 +12,12 @@ Build/
 __pycache__/
 *.pyc
 models/
+
+# Keep device-local Xiaozhi/Jam resources and full-flash backups out of Git.
+/outputs/
+/firmware/esp32-s3-touch-amoled-1.75/assets/
+/firmware/esp32-s3-touch-amoled-1.75/jam-assets/
+/firmware/esp32-s3-touch-amoled-1.75/jam_assets/
+/firmware/esp32-s3-touch-amoled-1.75/*assets*.bin
+/firmware/esp32-s3-touch-amoled-1.75/*jam*.bin
+/firmware/esp32-s3-touch-amoled-1.75/*backup*.bin
