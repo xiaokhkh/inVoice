@@ -30,8 +30,8 @@ serialization.
 - Release Fn, the display, or PWR; verify exactly one final result is pasted.
 - Press BOOT after normal startup; verify it toggles clipboard history once without starting recording or showing the green level ring.
 - Tap the display once and release quickly; verify it neither records nor submits.
-- Double-tap the display; verify exactly one Return is delivered to the frontmost application.
-- Repeat the double-tap in Codex, a browser, a terminal, and a chat input; verify each receives its normal Return behavior.
+- Short-tap the display; verify exactly one Return is delivered to the frontmost application.
+- Repeat the short tap in Codex, a browser, a terminal, and a chat input; verify each receives its normal Return behavior.
 - Hold PWR while pressing BOOT; verify the clipboard toggle does not release the active F13 recording gesture.
 
 ## Dock and hot-plug regression

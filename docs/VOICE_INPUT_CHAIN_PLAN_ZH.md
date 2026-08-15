@@ -43,7 +43,7 @@
 - 不因 AX 无法验证 Electron/WebView 内容而重试。
 - 用户切换应用后不把文字注入新应用；结果保留在剪贴板。
 - 板端自然人声不能自行触发录音，只有屏幕或 PWR 按住有效；BOOT 单击只切换
-  剪贴板面板，屏幕短按一次无动作、双击发送一次通用 Return。
+  剪贴板面板，屏幕短按发送一次通用 Return。
 
 ## 整改前后对照
 
@@ -116,7 +116,7 @@
 ### P2：设备和人工回归
 
 - [x] 代码一次只绑定一个 CoreAudio input；`system_profiler` 已识别 `MLX Voice Mic` 为 USB、单通道、24kHz。
-- [ ] 分别测试屏幕、PWR 的按住/松开只产生一组 F13 down/up；BOOT 单击只产生一组 F14 down/up；屏幕双击只产生一组 Enter down/up。
+- [ ] 分别测试屏幕、PWR 的按住/松开只产生一组 F13 down/up；BOOT 单击只产生一组 F14 down/up；屏幕短按只产生一组 Enter down/up。
 - [ ] 测试 Codex、Chrome/Safari contenteditable、飞书、TextEdit、Terminal/iTerm2、中文输入法和非 QWERTY 布局。
 - [ ] 测试识别期间切换应用、点击其他输入框、复制新内容、拔插板子以及连续快速录音。
 - [x] 日志统一携带 Session ID、状态转换、目标/当前 PID、投递所有权和最终 delivery status。

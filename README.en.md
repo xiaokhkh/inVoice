@@ -39,7 +39,7 @@ dependencies and download models.
 | --- | --- | --- | --- |
 | Voice input | Hold `Fn`, then release | Hold the display or PWR, then release | Preview, final recognition, optional rewrite, and one insertion |
 | Clipboard history | `Command + Fn` | Press BOOT once | Toggle the searchable clipboard panel |
-| Submit current input | Press `Return` | Double-tap the display | Send one standard Return to the frontmost application |
+| Submit current input | Press `Return` | Short-tap the display | Send one standard Return to the frontmost application |
 | Translate selection | `Command + Option + T` | — | Open the streaming local translation panel |
 | Settings | `Command + Option + P` | — | Open setup, permissions, models, and prompts |
 
@@ -60,7 +60,7 @@ ESP32-S3-Touch-AMOLED-1.75**, standard model **SKU 31261**. This is the original
 | SoC | `ESP32-S3R8`, dual-core LX7 up to 240 MHz | USB Audio, HID, OTA, UI, and audio capture |
 | Memory | 8 MB PSRAM + external 16 MB Flash | Dual OTA slots plus preserved Jam assets |
 | AMOLED | 1.75 inch, 466×466, `CO5300` over QSPI | Jam animation and full-dial level ring |
-| Touch | `CST9217` over I2C | Hold-to-talk and double-tap Return |
+| Touch | `CST9217` over I2C | Hold-to-talk and short-tap Return |
 | Audio ADC | `ES7210`, dual onboard microphones | 24 kHz mono, 16-bit USB microphone stream |
 | Power / I/O | `AXP2101` + `TCA9554` | PWR input, power control, and GPIO expansion |
 | Sensors | `QMI8658` IMU + `PCF85063` RTC | Present on the board; not required by inVoice |
@@ -78,8 +78,8 @@ and the [ESP32-S3 datasheet](https://www.espressif.com/sites/default/files/docum
 
 - Hold the display or PWR to send the private F13 push-to-talk state.
 - Release to finish the same recording. Natural speech never starts a session.
-- A single short display tap does nothing. Double-tap the display within 650 ms
-  to send one standard USB HID Return directly to the frontmost application.
+- Short-tap the display to send one standard USB HID Return directly to the
+  frontmost application. Hold it for 250 ms to start push-to-talk instead.
   This works without app-specific host translation or Accessibility permission.
 - While held, the preserved Jam character switches to its thinking state and a
   speech-sensitive green ring runs around the full display.

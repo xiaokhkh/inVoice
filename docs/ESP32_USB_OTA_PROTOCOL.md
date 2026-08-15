@@ -23,7 +23,7 @@ Subsequent updates write only the inactive application slot.
 The composite USB device exposes three independent functions:
 
 - UAC microphone: 24 kHz, mono, 16-bit PCM;
-- keyboard HID: F13 push-to-talk, F14 clipboard panel, and standard Enter for a screen-double-tap Return;
+- keyboard HID: F13 push-to-talk, F14 clipboard panel, and standard Enter for a short-screen-tap Return;
 - vendor HID: usage page `0xFF00`, usage `0x0001`, 64-byte feature reports.
 
 The host binds keyboard controls to the same board VID/PID rather than treating

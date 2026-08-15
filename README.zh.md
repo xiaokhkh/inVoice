@@ -37,7 +37,7 @@ sherpa-onnx 和 Ollama。只有安装依赖和下载模型时需要联网。
 | --- | --- | --- | --- |
 | 语音输入 | 按住 `Fn`，说完松开 | 按住屏幕或 PWR，说完松开 | 实时预览、最终识别、可选改写并插入一次 |
 | 剪贴板历史 | `Command + Fn` | 按一下 BOOT | 切换可搜索的剪贴板面板 |
-| 提交当前输入 | 按 `Return` | 双击屏幕 | 向当前前台应用发送一次标准 Return |
+| 提交当前输入 | 按 `Return` | 短按屏幕 | 向当前前台应用发送一次标准 Return |
 | 翻译选中文字 | `Command + Option + T` | — | 打开流式本地翻译面板 |
 | 设置 | `Command + Option + P` | — | 打开权限、模型和提示词设置 |
 
@@ -56,7 +56,7 @@ VID/PID 的 HID 报告，因此扩展坞或其他键盘不会制造第二份录�
 | SoC | `ESP32-S3R8`，双核 LX7，最高 240 MHz | USB Audio、HID、OTA、UI 和音频采集 |
 | 内存 | 8 MB PSRAM + 外置 16 MB Flash | 双 OTA 槽和保留的 Jam 资源 |
 | AMOLED | 1.75 英寸、466×466、`CO5300`、QSPI | Jam 动画与整圈绿色音量环 |
-| 触摸 | `CST9217`、I2C | 屏幕按住说话与双击 Return |
+| 触摸 | `CST9217`、I2C | 屏幕按住说话与短按 Return |
 | 音频 ADC | `ES7210`、板载双麦克风 | 24 kHz、单声道、16-bit USB 音频流 |
 | 电源 / I/O | `AXP2101` + `TCA9554` | PWR 输入、电源管理与 GPIO 扩展 |
 | 传感器 | `QMI8658` IMU + `PCF85063` RTC | 板上自带，inVoice 当前不依赖 |
@@ -74,8 +74,8 @@ Waveshare 还列出了带壳版 `-B`（SKU `31262`）和 GPS 版 `-G`
 
 - 按住屏幕或 PWR，开发板发送私有 F13 按住说话状态。
 - 松开后结束同一录音；自然人声永远不会自行触发 Session。
-- 短按一次屏幕不执行动作；650 ms 内双击屏幕会直接向前台应用发送一次标准
-  USB HID Return，不依赖 inVoice 做应用适配，也不需要辅助功能权限。
+- 短按屏幕会直接向前台应用发送一次标准 USB HID Return；按住 250 ms 则进入
+  语音输入，不依赖 inVoice 做应用适配，也不需要辅助功能权限。
 - 仅按住期间，保留的 Jam 表情切换到 thinking，绿色音量环绕整块圆屏显示。
 - 正常运行时按一下 BOOT，发送 F14 并切换剪贴板历史面板。
 - 设备名为 `MLX Voice Mic`，同时提供 USB Audio、键盘 HID 和独立厂商

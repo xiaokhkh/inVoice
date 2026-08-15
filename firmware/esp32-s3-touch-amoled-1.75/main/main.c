@@ -23,7 +23,6 @@
 #define BUTTON_DEBOUNCE_SAMPLES DEBOUNCE_SAMPLES(BUTTON_DEBOUNCE_MS)
 #define CONTROL_STATE_SYNC_MS 250
 #define TOUCH_HOLD_MS 250
-#define TOUCH_DOUBLE_CLICK_MS 650
 #define SUBMIT_PULSE_MS 40
 
 static const char *TAG = "mlx_voice_mic";
@@ -325,9 +324,7 @@ static void physical_button_task(void *context)
     input_debouncer_t boot_debouncer = {0};
     bool touch_was_pressed = false;
     bool touch_hold_active = false;
-    bool touch_tap_pending = false;
     TickType_t touch_pressed_at = 0;
-    TickType_t first_tap_released_at = 0;
     TickType_t last_control_sync = xTaskGetTickCount();
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(INPUT_SCAN_MS));
@@ -346,30 +343,15 @@ static void physical_button_task(void *context)
             if (touch_hold_active) {
                 (void)set_trigger_source(TRIGGER_SOURCE_TOUCH, false, false);
                 touch_hold_active = false;
-            } else if (touch_tap_pending &&
-                       now - first_tap_released_at <=
-                           pdMS_TO_TICKS(TOUCH_DOUBLE_CLICK_MS)) {
-                touch_tap_pending = false;
-                pulse_return();
             } else {
-                touch_tap_pending = true;
-                first_tap_released_at = now;
+                pulse_return();
             }
         }
 
         if (touch_pressed && !touch_hold_active &&
             now - touch_pressed_at >= pdMS_TO_TICKS(TOUCH_HOLD_MS)) {
-            // A long second touch belongs to PTT, not to the pending tap pair.
-            touch_tap_pending = false;
             touch_hold_active = true;
             (void)set_trigger_source(TRIGGER_SOURCE_TOUCH, true, false);
-        }
-
-        if (touch_tap_pending && !touch_pressed &&
-            now - first_tap_released_at >
-                pdMS_TO_TICKS(TOUCH_DOUBLE_CLICK_MS)) {
-            // A single short screen tap is intentionally a no-op.
-            touch_tap_pending = false;
         }
 
         const bool boot_pressed = debounce_input(
@@ -449,5 +431,5 @@ void app_main(void)
     }
 
     xTaskCreate(physical_button_task, "physical_buttons", 3072, NULL, 4, NULL);
-    ESP_LOGI(TAG, "MLX Voice Mic ready: hold touch/PWR to talk; double-tap touch for Return; press BOOT for clipboard");
+    ESP_LOGI(TAG, "MLX Voice Mic ready: hold touch/PWR to talk; tap touch for Return; press BOOT for clipboard");
 }
