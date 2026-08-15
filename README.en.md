@@ -6,14 +6,34 @@ English · [中文](README.zh.md)
   <img src="apps/macos/VoiceOps/Assets.xcassets/AppIcon.appiconset/invoice_icon_256.png" width="112" alt="inVoice icon">
 </p>
 
-> Hold a key. Speak naturally. Release to put polished text at your cursor.
+<p align="center">
+  <strong>Hold. Speak. Release. Keep typing.</strong><br>
+  Private, local voice input for every text field on your Mac.
+</p>
 
-![Using the ESP32-S3 Touch AMOLED as a push-to-talk microphone for inVoice](docs/assets/voiceops-hardware-use-case.png)
+<p align="center">
+  <a href="https://github.com/xiaokhkh/inVoice/releases/latest">Download</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="README.zh.md">中文文档</a>
+</p>
+
+<p align="center">
+  <img alt="macOS 13+" src="https://img.shields.io/badge/macOS-13%2B-111111?logo=apple">
+  <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple%20Silicon-native-111111">
+  <img alt="Local first" src="https://img.shields.io/badge/AI-local--first-16a34a">
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-2563eb"></a>
+</p>
+
+![Real inVoice product tour: setup, shortcuts, permissions, and local model status](docs/assets/invoice-demo.gif)
 
 inVoice is a local-first macOS menu bar app for voice input, translation,
-and writing assistance. Use the Mac `Fn` key, or connect the round Waveshare
-ESP32-S3 microphone and hold its screen: speak, release, and the final text is
-inserted once into the app you were using.
+and writing assistance. Hold the Mac `Fn` key, speak naturally, then release:
+the final text is inserted once into the app you were already using. No
+development board is required.
+
+For a tactile desk setup, connect the optional round Waveshare ESP32-S3
+microphone and use its display as a push-to-talk surface. It adds hardware
+controls without changing the Mac-only workflow.
 
 Speech recognition and optional rewriting run locally on Apple Silicon with
 MLX, sherpa-onnx, and Ollama. Network access is only needed to install
@@ -21,6 +41,19 @@ dependencies and download models.
 
 > The default prompt turns Chinese speech into natural English. Voice,
 > translation, and action-summary prompts are editable in inVoice Settings.
+
+## Why inVoice
+
+- **Works where you already type.** Use it in ChatGPT, Codex, Mail, Notes,
+  browsers, editors, and chat apps without moving text between windows.
+- **Private after setup.** Audio, transcripts, rewrites, and clipboard history
+  stay on your Mac; local services listen only on loopback.
+- **Safe delivery.** The result is pasted only if the original app is still in
+  front. Otherwise it stays on the clipboard instead of landing in the wrong place.
+- **Useful beyond dictation.** Search clipboard history, translate a selection,
+  and tune local writing prompts from one menu bar app.
+- **Hardware is optional.** Start with the Mac keyboard and add the supported
+  ESP32-S3 push-to-talk microphone only if you want a physical control surface.
 
 ## At a glance
 
@@ -49,6 +82,8 @@ current macOS input. Board F13/F14 reports are accepted only from its exact USB
 VID/PID, so docks and unrelated keyboards cannot create a second recording.
 
 ## Supported microphone hardware
+
+![Using the optional ESP32-S3 Touch AMOLED as a push-to-talk microphone for inVoice](docs/assets/voiceops-hardware-use-case.png)
 
 The firmware in this repository targets the **Waveshare
 ESP32-S3-Touch-AMOLED-1.75**, standard model **SKU 31261**. This is the original
@@ -116,16 +151,32 @@ unavailable, the final text remains on the clipboard for manual recovery.
 
 - macOS 13 or later
 - Apple Silicon Mac
-- Xcode
 - Python 3.9 or later
 - [Ollama for macOS](https://ollama.com/download/mac)
 - Internet access during first installation
+- Xcode only when building from source
 - Optional hardware path: Waveshare SKU `31261` and a data-capable USB Type-C cable
 
 The first installation downloads several gigabytes of models. The default
 install is per-user and does not require an administrator password.
 
 ## Quick start
+
+### Install the beta
+
+1. Install and open [Ollama](https://ollama.com/download/mac), and make sure
+   `python3` is available.
+2. Download the Apple Silicon DMG from the
+   [latest GitHub Release](https://github.com/xiaokhkh/inVoice/releases/latest).
+3. Open the DMG and double-click **Install inVoice.command**. It installs the
+   app under `~/Applications` and downloads the local models for your account.
+4. If macOS blocks the ad-hoc-signed beta, right-click the installer and choose
+   **Open**, then confirm it under **System Settings → Privacy & Security**.
+
+The installer is intentionally readable shell code. It does not request an
+administrator password, and audio inference still runs locally after setup.
+
+### Build from source
 
 Install and open Ollama first, then run:
 
@@ -135,10 +186,10 @@ cd inVoice
 ./scripts/install.sh
 ```
 
-The repeatable installer prepares both Python environments, downloads missing
-ASR models, prepares the default Ollama model, builds the Release app, installs
-it at `~/Applications/inVoice.app`, records the checkout's sidecar path, and
-launches inVoice.
+The repeatable source installer prepares both Python environments, downloads
+missing ASR models, prepares the default Ollama model, builds the Release app,
+installs it at `~/Applications/inVoice.app`, records the checkout's sidecar
+path, and launches inVoice.
 
 ### First run
 

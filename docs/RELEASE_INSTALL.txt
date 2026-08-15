@@ -1,0 +1,45 @@
+inVoice Beta — local-first voice input for macOS
+=================================================
+
+English
+-------
+
+Requirements:
+- Apple Silicon Mac running macOS 13 or later
+- Python 3.9 or later available as `python3`
+- Ollama installed and opened: https://ollama.com/download/mac
+- Internet access while the local models are downloaded
+
+Install:
+1. Double-click "Install inVoice.command".
+2. If macOS blocks the ad-hoc-signed beta, right-click the installer and choose
+   Open, then confirm it under System Settings > Privacy & Security.
+3. Wait for the local runtime and models to finish downloading.
+4. Open inVoice Settings and grant Input Monitoring, Accessibility, and
+   Microphone access.
+5. Focus a text field, hold Fn, speak, and release.
+
+The installer writes only to your user account, installs the app under
+~/Applications, and does not request an administrator password. Review the
+source or report an issue at https://github.com/xiaokhkh/inVoice.
+
+
+中文
+----
+
+环境要求：
+- macOS 13 或更高版本的 Apple Silicon Mac
+- 可以通过 `python3` 运行的 Python 3.9 或更高版本
+- 已安装并打开 Ollama：https://ollama.com/download/mac
+- 下载本地模型时可访问互联网
+
+安装：
+1. 双击“Install inVoice.command”。
+2. 如果 macOS 拦截当前临时签名的 Beta 版，右键安装器选择“打开”，
+   然后在“系统设置 > 隐私与安全性”中确认。
+3. 等待本地运行环境和模型下载完成。
+4. 打开 inVoice Settings，授予输入监控、辅助功能和麦克风权限。
+5. 聚焦任意文本框，按住 Fn 说话，说完松开。
+
+安装器只写入当前用户目录，App 安装到 ~/Applications，不会要求管理员
+密码。源码审阅和问题反馈：https://github.com/xiaokhkh/inVoice。

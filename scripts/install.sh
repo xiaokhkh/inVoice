@@ -12,6 +12,7 @@ SKIP_MODELS=0
 SKIP_OLLAMA=0
 NO_LAUNCH=0
 TEMP_DIR=""
+PREBUILT_APP=""
 
 usage() {
   cat <<'EOF'
@@ -26,6 +27,7 @@ Options:
   --no-launch         Install the app without launching it.
   --install-dir PATH  Install under PATH instead of ~/Applications.
   --python PATH       Python 3.9+ executable used to create virtual environments.
+  --app-bundle PATH   Install a prebuilt inVoice.app instead of requiring Xcode.
   -h, --help          Show this help.
 
 Environment overrides:
@@ -74,6 +76,11 @@ while [[ $# -gt 0 ]]; do
       PYTHON_BIN="$2"
       shift 2
       ;;
+    --app-bundle)
+      [[ $# -ge 2 ]] || fail "--app-bundle requires a path"
+      PREBUILT_APP="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -89,9 +96,14 @@ if [[ "$(uname -m)" != "arm64" ]]; then
   log "Warning: Apple Silicon is recommended; MLX ASR may not run on $(uname -m)."
 fi
 
-for tool in codesign curl ditto install open shasum tar xcodebuild; do
+for tool in codesign curl ditto install open shasum tar; do
   command -v "$tool" >/dev/null 2>&1 || fail "Missing required command: $tool"
 done
+if [[ -z "$PREBUILT_APP" ]]; then
+  command -v xcodebuild >/dev/null 2>&1 || fail "Missing required command: xcodebuild"
+else
+  [[ -d "$PREBUILT_APP" ]] || fail "Prebuilt app not found: $PREBUILT_APP"
+fi
 command -v "$PYTHON_BIN" >/dev/null 2>&1 || fail "Python executable not found: $PYTHON_BIN"
 
 if [[ "$SKIP_OLLAMA" -eq 0 ]] && ! command -v ollama >/dev/null 2>&1; then
@@ -226,12 +238,18 @@ prepare_ollama() {
 
 install_app() {
   local project="$ROOT_DIR/apps/macos/VoiceOps.xcodeproj"
-  local source="$ROOT_DIR/apps/macos/Build/Release/inVoice.app"
+  local source
   local target="$INSTALL_DIR/inVoice.app"
   local support="${HOME}/Library/Application Support/VoiceOps"
 
-  log "Building the Release app"
-  xcodebuild -project "$project" -scheme VoiceOps -configuration Release build -quiet
+  if [[ -n "$PREBUILT_APP" ]]; then
+    source="$PREBUILT_APP"
+    log "Using the prebuilt inVoice app"
+  else
+    source="$ROOT_DIR/apps/macos/Build/Release/inVoice.app"
+    log "Building the Release app"
+    xcodebuild -project "$project" -scheme VoiceOps -configuration Release build -quiet
+  fi
   [[ -d "$source" ]] || fail "Build completed without producing $source"
 
   log "Installing inVoice at $target"

@@ -6,19 +6,48 @@
   <img src="apps/macos/VoiceOps/Assets.xcassets/AppIcon.appiconset/invoice_icon_256.png" width="112" alt="inVoice 图标">
 </p>
 
-> 按住按键，自然说话，松开后，润色好的文字直接出现在光标处。
+<p align="center">
+  <strong>按住。说话。松开。继续创作。</strong><br>
+  面向 Mac 任意输入框的本地、私密语音输入。
+</p>
 
-![使用 ESP32-S3 Touch AMOLED 作为 inVoice 按住说话麦克风](docs/assets/voiceops-hardware-use-case.png)
+<p align="center">
+  <a href="https://github.com/xiaokhkh/inVoice/releases/latest">下载</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="README.en.md">English</a>
+</p>
+
+<p align="center">
+  <img alt="macOS 13+" src="https://img.shields.io/badge/macOS-13%2B-111111?logo=apple">
+  <img alt="Apple Silicon" src="https://img.shields.io/badge/Apple%20Silicon-native-111111">
+  <img alt="本地优先" src="https://img.shields.io/badge/AI-local--first-16a34a">
+  <a href="LICENSE"><img alt="MIT 许可证" src="https://img.shields.io/badge/license-MIT-2563eb"></a>
+</p>
+
+![inVoice 真实产品导览：配置、快捷键、权限和本地模型状态](docs/assets/invoice-demo.gif)
 
 inVoice 是一款本地优先的 macOS 菜单栏语音工具，用于语音输入、翻译和
-写作辅助。既可以按住 Mac 的 `Fn`，也可以接入圆形 Waveshare ESP32-S3
-收音器并按住屏幕：说话、松开，最终文字只会插入一次到原来的应用。
+写作辅助。按住 Mac 的 `Fn`，自然说话，松开后最终文字只会插入一次到
+你原来使用的应用。不购买开发板也能完整使用。
+
+如果想要更有手感的桌面工作流，可选接入圆形 Waveshare ESP32-S3 收音器，
+用屏幕作为实体按住说话按钮；它只是增强项，不会改变 Mac 单机工作流。
 
 语音识别和可选改写均在 Apple Silicon Mac 本机运行，使用 MLX、
 sherpa-onnx 和 Ollama。只有安装依赖和下载模型时需要联网。
 
 > 默认提示词会把中文语音整理成自然英文。语音、翻译和行动摘要提示词都可在
 > inVoice Settings 中修改。
+
+## 为什么选择 inVoice
+
+- **直接在原应用输入。** ChatGPT、Codex、邮件、备忘录、浏览器、编辑器和聊天框都能用，
+  不需要在窗口之间来回复制。
+- **配置后数据不出 Mac。** 音频、转写、改写和剪贴板历史均留在本机，服务只监听回环地址。
+- **投递位置更安全。** 只有开始录音的原应用仍在前台时才粘贴；否则保留在剪贴板，
+  避免文字误入其他窗口。
+- **不只是听写。** 同一个菜单栏应用还提供剪贴板搜索、选中翻译和本地写作提示词。
+- **硬件完全可选。** 先用 Mac 键盘开始，只有在需要实体控制面时再添加 ESP32-S3 收音器。
 
 ## 项目一览
 
@@ -46,6 +75,8 @@ sherpa-onnx 和 Ollama。只有安装依赖和下载模型时需要联网。
 VID/PID 的 HID 报告，因此扩展坞或其他键盘不会制造第二份录音。
 
 ## 支持的收音器硬件
+
+![使用可选 ESP32-S3 Touch AMOLED 作为 inVoice 按住说话麦克风](docs/assets/voiceops-hardware-use-case.png)
 
 仓库内固件面向 **Waveshare ESP32-S3-Touch-AMOLED-1.75** 标准版，
 型号 **SKU 31261**。这是初代 1.75 英寸开发板，不是后续的 `1.75C`。
@@ -108,15 +139,30 @@ flowchart LR
 
 - macOS 13 或更高版本
 - Apple Silicon Mac
-- Xcode
 - Python 3.9 或更高版本
 - [macOS 版 Ollama](https://ollama.com/download/mac)
 - 首次安装时可访问互联网
+- 仅从源码构建时需要 Xcode
 - 可选硬件链路：Waveshare SKU `31261` 和支持数据传输的 USB Type-C 线
 
 首次安装会下载数 GB 本地模型。默认安装在当前用户目录，不需要管理员密码。
 
 ## 快速开始
+
+### 安装 Beta 版
+
+1. 安装并打开 [Ollama](https://ollama.com/download/mac)，同时确认系统可以运行 `python3`。
+2. 从 [GitHub 最新 Release](https://github.com/xiaokhkh/inVoice/releases/latest)
+   下载 Apple Silicon DMG。
+3. 打开 DMG，双击 **Install inVoice.command**。它会把 App 安装到
+   `~/Applications`，并为当前用户下载本地模型。
+4. 当 macOS 拦截当前临时签名的 Beta 版时，右键安装器选择 **打开**，
+   再到 **系统设置 → 隐私与安全性** 中确认。
+
+安装器是可直接审阅的 Shell 脚本，不会要求管理员密码；首次配置后，
+音频推理仍然只在本机运行。
+
+### 从源码构建
 
 先安装并打开 Ollama，然后运行：
 
@@ -126,7 +172,7 @@ cd inVoice
 ./scripts/install.sh
 ```
 
-安装器可以重复执行。它会准备两个 Python 环境、下载缺失的 ASR 模型、准备
+源码安装器可以重复执行。它会准备两个 Python 环境、下载缺失的 ASR 模型、准备
 默认 Ollama 模型、构建 Release App、安装到
 `~/Applications/inVoice.app`、记录 sidecar 路径并启动 inVoice。
 
