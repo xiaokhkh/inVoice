@@ -11,7 +11,7 @@ usage() {
   cat <<'EOF'
 Usage: ./scripts/doctor.sh
 
-Runs read-only checks for the VoiceOps app, sidecar environments, local models,
+Runs read-only checks for the inVoice app, sidecar environments, local models,
 services, and install configuration. Exits non-zero when setup is incomplete.
 EOF
 }
@@ -45,7 +45,7 @@ check_environment() {
   if [[ "$(uname -s)" == "Darwin" ]]; then
     ok "macOS detected"
   else
-    issue "VoiceOps requires macOS"
+    issue "inVoice requires macOS"
   fi
   if [[ "$(uname -m)" == "arm64" ]]; then
     ok "Apple Silicon detected"
@@ -55,7 +55,7 @@ check_environment() {
   if command -v xcodebuild >/dev/null 2>&1; then
     ok "Xcode command-line tools are available"
   else
-    issue "Install Xcode before building VoiceOps"
+    issue "Install Xcode before building inVoice"
   fi
   if command -v python3 >/dev/null 2>&1; then
     ok "$(python3 --version 2>&1) is available"
@@ -81,12 +81,12 @@ check_sidecars() {
   if curl --silent --fail --max-time 2 http://127.0.0.1:8765/health >/dev/null 2>&1; then
     ok "Final ASR is listening on 127.0.0.1:8765"
   else
-    issue "Final ASR is offline; launch VoiceOps and inspect ~/Library/Logs/VoiceOps/sidecar_asr_mlx.log"
+    issue "Final ASR is offline; launch inVoice and inspect ~/Library/Logs/VoiceOps/sidecar_asr_mlx.log"
   fi
   if curl --silent --fail --max-time 2 http://127.0.0.1:8790/health >/dev/null 2>&1; then
     ok "Streaming ASR is listening on 127.0.0.1:8790"
   else
-    issue "Streaming ASR is offline; launch VoiceOps and inspect ~/Library/Logs/VoiceOps/sidecar_fast_asr.log"
+    issue "Streaming ASR is offline; launch inVoice and inspect ~/Library/Logs/VoiceOps/sidecar_fast_asr.log"
   fi
 }
 
@@ -147,19 +147,19 @@ check_models() {
 }
 
 check_installation() {
-  local app="$INSTALL_DIR/VoiceOps.app"
+  local app="$INSTALL_DIR/inVoice.app"
   local config="${HOME}/Library/Application Support/VoiceOps/sidecar-root"
 
   printf '\nApplication\n'
   if [[ -d "$app" ]]; then
-    ok "VoiceOps is installed at $app"
+    ok "inVoice is installed at $app"
     if codesign --verify --deep --strict "$app" >/dev/null 2>&1; then
       ok "App signature is valid"
     else
       issue "App signature is invalid; rerun ./scripts/install.sh"
     fi
   else
-    issue "VoiceOps.app is not installed; run ./scripts/install.sh"
+    issue "inVoice.app is not installed; run ./scripts/install.sh"
   fi
   if [[ -f "$config" ]] && [[ "$(<"$config")" == "$ROOT_DIR/sidecars" ]]; then
     ok "Installed app can locate this checkout's sidecars"
@@ -175,7 +175,7 @@ check_installation
 
 printf '\nSummary\n'
 if [[ "$ISSUES" -eq 0 ]]; then
-  printf '  VoiceOps is ready. Warnings: %d\n' "$WARNINGS"
+  printf '  inVoice is ready. Warnings: %d\n' "$WARNINGS"
   exit 0
 fi
 printf '  Found %d item(s) to fix and %d warning(s).\n' "$ISSUES" "$WARNINGS"

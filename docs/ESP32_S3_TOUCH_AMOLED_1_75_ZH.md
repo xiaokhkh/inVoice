@@ -4,7 +4,7 @@
 
 ## 硬件型号
 
-本项目把 Waveshare 圆屏开发板改造成 VoiceOps 专用的 USB 收音器、物理
+本项目把 Waveshare 圆屏开发板改造成 inVoice 专用的 USB 收音器、物理
 按住说话控制器和剪贴板入口。当前实测目标为标准版
 `ESP32-S3-Touch-AMOLED-1.75`，Waveshare SKU `31261`。
 
@@ -36,7 +36,7 @@ firmware/esp32-s3-touch-amoled-1.75/
 macOS 应用的默认安装位置：
 
 ```text
-~/Applications/VoiceOps.app
+~/Applications/inVoice.app
 ```
 
 原始小智全片备份和 Jam assets 备份不纳入 Git；首次刷写前应另外保存一份，
@@ -47,8 +47,8 @@ macOS 应用的默认安装位置：
 ```text
 屏幕 / PWR 按住
   -> ESP32-S3 发送 HID F13 key-down
-  -> VoiceOps 捕获原输入框和应用
-  -> VoiceOps 选择 MLX Voice Mic 录音
+  -> inVoice 捕获原输入框和应用
+  -> inVoice 选择 MLX Voice Mic 录音
   -> 24 kHz 单声道转换为 16 kHz ASR 输入
   -> 松开时发送 HID F13 key-up
   -> GLM-ASR 最终识别
@@ -57,7 +57,11 @@ macOS 应用的默认安装位置：
 
 固件运行时按一下 BOOT
   -> ESP32-S3 发送 HID F14 key-down / key-up
-  -> VoiceOps 切换剪贴板历史面板
+  -> inVoice 切换剪贴板历史面板
+
+650 ms 内短按屏幕两次
+  -> ESP32-S3 发送一次 HID F15 key-down / key-up
+  -> 仅当 Codex 位于前台且语音 Session 已空闲时发送一次 Return
 ```
 
 板端 USB 设备：
@@ -65,21 +69,21 @@ macOS 应用的默认安装位置：
 - 产品名：`MLX Voice Mic`
 - VID/PID：`0x303A / 0x4002`
 - 音频：24 kHz、单声道、16-bit PCM
-- HID：F13 为语音 PTT，F14 为剪贴板面板开关
+- HID：F13 为语音 PTT，F14 为剪贴板面板开关，F15 为屏幕双击提交
 - OTA：独立厂商 HID，通过现有 Type-C 传输，不产生键盘事件
 - 麦克风：板载 ES7210，模拟增益 36 dB
 
 ## 扩展坞与热插拔保护
 
-- macOS 不再把系统里的任意 F13/F14 当成板端输入，而是通过 IOKit 直接
+- macOS 不再把系统里的任意 F13/F14/F15 当成板端输入，而是通过 IOKit 直接
   匹配 `0x303A / 0x4002` 的键盘 HID 接口。
 - 每个已枚举板端设备独立保存按下状态；扩展坞重枚举或设备拔出时删除该
   设备，并立即强制结束仍在进行的板端输入。
-- 固件每 250 ms 重发一次 F13/F14 的完整绝对状态。扩展坞休眠/恢复期间
+- 固件每 250 ms 重发一次 F13/F14/F15 的完整绝对状态。扩展坞休眠/恢复期间
   即使丢失一次松开报告，也会在链路恢复后自动纠正，不会一直停留在输入状态。
 - 屏幕、PWR 和 BOOT 必须连续稳定 100 ms 才接受状态变化，用于过滤 USB
   供电噪声和触摸控制器产生的几十毫秒短脉冲。
-- 系统 Fn 快捷键仍按原逻辑工作；其他键盘或扩展坞产生的 F13/F14 不会
+- 系统 Fn 快捷键仍按原逻辑工作；其他键盘或扩展坞产生的 F13/F14/F15 不会
   触发板端录音。
 
 ## 板端 UI 行为
@@ -87,14 +91,16 @@ macOS 应用的默认安装位置：
 - 保留原小智 `assets` 分区里的 Jam GIF。
 - 待机不显示底部文字。
 - 只有按住屏幕或 PWR 时显示绿色圆形实时音量环。
-- 松开后圆环立即隐藏并结束 VoiceOps 本次输入。
+- 松开后圆环立即隐藏并结束 inVoice 本次输入。
+- 屏幕短按一次无动作；去抖后按住 250 ms 才启动语音，650 ms 内完成两次
+  短按才触发 Codex 提交。BOOT 仍是单击打开剪贴板。
 - 固件正常运行时按 BOOT 只切换剪贴板面板，不启动录音或音量环。
 - 自然人声和主机单独打开麦克风不会触发圆环或 F13。
 - PWR 长按关机动作被关闭，避免长句录音时断电。
 
 ## “识别成功但没有输入文字”的原因
 
-已经确认板端、USB 音频和 ASR 都正常。故障发生在 VoiceOps 的最后一步：
+已经确认板端、USB 音频和 ASR 都正常。故障发生在 inVoice 的最后一步：
 
 1. `FnSessionController` 录音开始时保存了目标应用 PID；识别完成后再次比较当前前台 PID。
 2. 处理期间只要前台应用发生短暂变化，旧逻辑就执行 `inject_skip`，完全不尝试写入已保存的输入框。
@@ -135,7 +141,7 @@ apps/macos/VoiceOps/Services/FnSessionController.swift
 apps/macos/VoiceOps/Services/FocusInjector.swift
 ```
 
-## 构建与安装 VoiceOps
+## 构建与安装 inVoice
 
 在主项目根目录执行：
 
@@ -150,9 +156,9 @@ xcodebuild -project apps/macos/VoiceOps.xcodeproj \
 ./scripts/install.sh --skip-models --skip-ollama
 ```
 
-VoiceOps 需要三项 macOS 权限：
+inVoice 需要三项 macOS 权限：
 
-- 输入监控：接收系统 Fn；板端 F13/F14 由绑定 VID/PID 的 IOKit HID
+- 输入监控：接收系统 Fn；板端 F13/F14/F15 由绑定 VID/PID 的 IOKit HID
   监控独立接收。
 - 辅助功能：向当前目标应用发送合成 Cmd+V；最终方案不再强制恢复 AX 焦点。
 - 麦克风：采集 `MLX Voice Mic`。

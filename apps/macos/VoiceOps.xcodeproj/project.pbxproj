@@ -59,7 +59,7 @@
 		A1B2C3D4E5F601020304050D /* ClipboardItemRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardItemRowView.swift; sourceTree = "<group>"; };
 		0DEB9D511A0072BA0F762A78 /* PipelineController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PipelineController.swift; sourceTree = "<group>"; };
 		22A6147F3235591061E702C5 /* LLMRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMRouter.swift; sourceTree = "<group>"; };
-		28E224505818686A6DED2E24 /* VoiceOps.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VoiceOps.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		28E224505818686A6DED2E24 /* inVoice.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = inVoice.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2D57F00751A65B115B24C5D4 /* TextStabilizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextStabilizer.swift; sourceTree = "<group>"; };
 		3161165938F653DCDE60F238 /* FnSessionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FnSessionController.swift; sourceTree = "<group>"; };
 		362C14BC8CA14CC117DBD29F /* HotKeyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotKeyService.swift; sourceTree = "<group>"; };
@@ -190,7 +190,7 @@
 		F7A3F9039055922248A1D262 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				28E224505818686A6DED2E24 /* VoiceOps.app */,
+				28E224505818686A6DED2E24 /* inVoice.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -213,7 +213,7 @@
 			packageProductDependencies = (
 			);
 			productName = VoiceOps;
-			productReference = 28E224505818686A6DED2E24 /* VoiceOps.app */;
+			productReference = 28E224505818686A6DED2E24 /* inVoice.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -381,6 +381,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				OTHER_CODE_SIGN_FLAGS = "--requirements $(SRCROOT)/VoiceOps/VoiceOps.requirements";
 				PRODUCT_BUNDLE_IDENTIFIER = com.voiceops.VoiceOps;
+				PRODUCT_NAME = inVoice;
 				SDKROOT = macosx;
 			};
 			name = Debug;
@@ -458,6 +459,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				OTHER_CODE_SIGN_FLAGS = "--requirements $(SRCROOT)/VoiceOps/VoiceOps.requirements";
 				PRODUCT_BUNDLE_IDENTIFIER = com.voiceops.VoiceOps;
+				PRODUCT_NAME = inVoice;
 				SDKROOT = macosx;
 			};
 			name = Release;

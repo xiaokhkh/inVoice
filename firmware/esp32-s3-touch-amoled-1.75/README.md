@@ -31,9 +31,11 @@ for the manufacturer specification.
 - `sleepy.gif`: disconnected or muted
 - `sad.gif`: initialization/runtime error
 
-Hold the display or the top PWR button to begin VoiceOps dictation; release to
+Hold the display or the top PWR button to begin inVoice dictation; release to
 finish and send. Press the top BOOT button while the firmware is running to
-toggle the VoiceOps clipboard-history panel. There is no always-listening voice
+toggle the inVoice clipboard-history panel. A single short display tap is a
+no-op; double-tap the display within 650 ms to submit the current Codex input.
+There is no always-listening voice
 activation. There is no status text on screen. Only while a dictation control
 is physically held, a speech-sensitive green circular meter runs
 around the entire dial and the preserved Jam UI switches to `thinking.gif`.
@@ -44,10 +46,10 @@ dictation cannot accidentally power the board off.
 
 USB is exposed as a composite device: **MLX Voice Mic** (24 kHz, mono, 16-bit
 PCM), a keyboard HID interface, and an independent vendor HID firmware-update
-interface. F13 is the private push-to-talk signal and F14 is the dedicated
-clipboard-panel signal. The updater never emits keyboard reports. The matching
-`mlx-voiceops` build consumes both keys and converts microphone audio to its 16
-kHz ASR format.
+interface. F13 is the private push-to-talk signal, F14 is the dedicated
+clipboard-panel signal, and F15 is the double-tap submit pulse. The updater
+never emits keyboard reports. The matching `mlx-voiceops` build consumes these
+controls and converts microphone audio to its 16 kHz ASR format.
 
 For dock and hot-plug safety, the macOS host reads those controls only from the
 board keyboard interface with VID/PID `0x303A:0x4002`; unrelated keyboards
@@ -57,8 +59,9 @@ on the host, while the periodic absolute report repairs a release lost during a
 dock suspend/resume cycle.
 
 Screen, PWR, and BOOT inputs additionally require 100 ms of continuous stable
-state before a transition is accepted. This filters short touch-controller and
-power-rail glitches without changing the hold-to-talk interaction.
+state before a transition is accepted. After that filter, display touches under
+250 ms remain tap candidates while a 250 ms hold starts PTT. This filters short
+touch-controller and power-rail glitches without allowing speech to trigger PTT.
 
 ## Important
 
@@ -116,7 +119,8 @@ The macOS implementation lives in these files:
 
 - `apps/macos/VoiceOps/Services/FnKeyMonitor.swift`: binds directly to the board
   keyboard VID/PID, aggregates hot-plug state per device, treats F13 as PTT and
-  F14 as the clipboard-panel toggle, and forces release on removal.
+  F14 as the clipboard-panel toggle, treats F15 as Codex submit, and forces
+  release on removal.
 - `apps/macos/VoiceOps/Services/AudioCaptureService.swift`: prefers
   `MLX Voice Mic` and converts its 24 kHz input for the 16 kHz recognizers.
 - `apps/macos/VoiceOps/Services/FnSessionController.swift`: owns the recording

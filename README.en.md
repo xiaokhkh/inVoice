@@ -1,10 +1,16 @@
-# MLX VoiceOps
+# inVoice
 
 English · [中文](README.zh.md)
 
-![Using the ESP32-S3 Touch AMOLED as a push-to-talk microphone for MLX VoiceOps](docs/assets/voiceops-hardware-use-case.png)
+<p align="center">
+  <img src="apps/macos/VoiceOps/Assets.xcassets/AppIcon.appiconset/invoice_icon_256.png" width="112" alt="inVoice icon">
+</p>
 
-MLX VoiceOps is a local-first macOS menu bar app for voice input, translation,
+> Hold a key. Speak naturally. Release to put polished text at your cursor.
+
+![Using the ESP32-S3 Touch AMOLED as a push-to-talk microphone for inVoice](docs/assets/voiceops-hardware-use-case.png)
+
+inVoice is a local-first macOS menu bar app for voice input, translation,
 and writing assistance. Use the Mac `Fn` key, or connect the round Waveshare
 ESP32-S3 microphone and hold its screen: speak, release, and the final text is
 inserted once into the app you were using.
@@ -14,7 +20,7 @@ MLX, sherpa-onnx, and Ollama. Network access is only needed to install
 dependencies and download models.
 
 > The default prompt turns Chinese speech into natural English. Voice,
-> translation, and action-summary prompts are editable in Preferences.
+> translation, and action-summary prompts are editable in inVoice Settings.
 
 ## At a glance
 
@@ -33,12 +39,13 @@ dependencies and download models.
 | --- | --- | --- | --- |
 | Voice input | Hold `Fn`, then release | Hold the display or PWR, then release | Preview, final recognition, optional rewrite, and one insertion |
 | Clipboard history | `Command + Fn` | Press BOOT once | Toggle the searchable clipboard panel |
+| Submit Codex input | Press `Return` | Double-tap the display | Send once, only when Codex is frontmost and dictation is idle |
 | Translate selection | `Command + Option + T` | — | Open the streaming local translation panel |
-| Preferences | `Command + Option + P` | — | Open setup, permissions, models, and prompts |
+| Settings | `Command + Option + P` | — | Open setup, permissions, models, and prompts |
 
 When the board is connected, every new recording prefers its USB microphone.
 After it is unplugged, the next recording transparently falls back to the
-current macOS input. Board F13/F14 reports are accepted only from its exact USB
+current macOS input. Board F13/F14/F15 reports are accepted only from its exact USB
 VID/PID, so docks and unrelated keyboards cannot create a second recording.
 
 ## Supported microphone hardware
@@ -47,16 +54,16 @@ The firmware in this repository targets the **Waveshare
 ESP32-S3-Touch-AMOLED-1.75**, standard model **SKU 31261**. This is the original
 1.75-inch board, not the newer `1.75C` product.
 
-| Part | Model / specification | Role in VoiceOps |
+| Part | Model / specification | Role in inVoice |
 | --- | --- | --- |
 | Board | `ESP32-S3-Touch-AMOLED-1.75`, SKU `31261` | Tested firmware target |
 | SoC | `ESP32-S3R8`, dual-core LX7 up to 240 MHz | USB Audio, HID, OTA, UI, and audio capture |
 | Memory | 8 MB PSRAM + external 16 MB Flash | Dual OTA slots plus preserved Jam assets |
 | AMOLED | 1.75 inch, 466×466, `CO5300` over QSPI | Jam animation and full-dial level ring |
-| Touch | `CST9217` over I2C | Push-to-talk touchscreen |
+| Touch | `CST9217` over I2C | Hold-to-talk and double-tap Codex submit |
 | Audio ADC | `ES7210`, dual onboard microphones | 24 kHz mono, 16-bit USB microphone stream |
 | Power / I/O | `AXP2101` + `TCA9554` | PWR input, power control, and GPIO expansion |
-| Sensors | `QMI8658` IMU + `PCF85063` RTC | Present on the board; not required by VoiceOps |
+| Sensors | `QMI8658` IMU + `PCF85063` RTC | Present on the board; not required by inVoice |
 
 Waveshare also lists the `-B` enclosure version as SKU `31262` and the `-G` GPS
 version as SKU `31264`. They are official variants, but this project currently
@@ -71,6 +78,9 @@ and the [ESP32-S3 datasheet](https://www.espressif.com/sites/default/files/docum
 
 - Hold the display or PWR to send the private F13 push-to-talk state.
 - Release to finish the same recording. Natural speech never starts a session.
+- A single short display tap does nothing. Double-tap the display within 650 ms
+  to send one private F15 submit pulse; the host converts it to Return only when
+  Codex is frontmost and no voice Session is recording or processing.
 - While held, the preserved Jam character switches to its thinking state and a
   speech-sensitive green ring runs around the full display.
 - Press BOOT during normal operation to send F14 and toggle clipboard history.
@@ -96,7 +106,7 @@ flowchart LR
     H --> I["Clipboard history"]
 ```
 
-The preview window never takes keyboard focus. VoiceOps records the foreground
+The preview window never takes keyboard focus. inVoice records the foreground
 application at session start and sends exactly one private Cmd+V only if that
 application is still in front. If focus changed or event delivery is
 unavailable, the final text remains on the clipboard for manual recovery.
@@ -119,26 +129,26 @@ install is per-user and does not require an administrator password.
 Install and open Ollama first, then run:
 
 ```bash
-git clone https://github.com/xiaokhkh/mlx-voiceops.git
-cd mlx-voiceops
+git clone https://github.com/xiaokhkh/inVoice.git
+cd inVoice
 ./scripts/install.sh
 ```
 
 The repeatable installer prepares both Python environments, downloads missing
 ASR models, prepares the default Ollama model, builds the Release app, installs
-it at `~/Applications/VoiceOps.app`, records the checkout's sidecar path, and
-launches VoiceOps.
+it at `~/Applications/inVoice.app`, records the checkout's sidecar path, and
+launches inVoice.
 
 ### First run
 
-1. Open Preferences → **Permissions**.
+1. Open **inVoice Settings** → **Permissions**.
 2. Grant **Input Monitoring**, **Accessibility**, and **Microphone** once.
-3. Return to VoiceOps and click **Refresh Status**.
+3. Return to inVoice and click **Refresh Status**.
 4. Confirm that permissions and Local Runtime items are green.
 5. Focus a text field, hold `Fn` or the board display, speak, and release.
 
 Permission prompts are only triggered by the matching setup button or voice
-action. VoiceOps does not repeatedly request permissions at launch.
+action. inVoice does not repeatedly request permissions at launch.
 
 ## Install and update the board firmware
 
@@ -203,7 +213,7 @@ Runtime logs are stored in `~/Library/Logs/VoiceOps/`.
 
 --skip-models       Keep existing ASR models and skip model downloads
 --skip-ollama       Skip Ollama checks and the model pull
---no-launch         Install without opening VoiceOps
+--no-launch         Install without opening inVoice
 --install-dir PATH  Install outside ~/Applications
 --python PATH       Use a specific Python 3.9+ executable
 ```
@@ -234,7 +244,7 @@ Runtime logs are stored in `~/Library/Logs/VoiceOps/`.
 
 After setup, transcription and LLM processing use loopback-only local services.
 Prompt templates are stored in macOS user defaults and can be edited under
-Preferences → LLM.
+inVoice Settings → LLM.
 
 ## Development
 
@@ -264,6 +274,10 @@ xcodebuild -project apps/macos/VoiceOps.xcodeproj \
 
 Manual product checks are documented in [docs/TESTING.md](docs/TESTING.md).
 
+The user-facing product and app bundle are named `inVoice`. The existing Xcode
+target, bundle identifier, and `VoiceOps` support/log directory names remain
+unchanged internally so upgrades retain macOS permissions and local data.
+
 ### Local endpoints
 
 | Service | Port | Endpoint |
@@ -289,7 +303,7 @@ docs/                                   Protocols, handoff notes, tests, and ass
 
 ## Project status
 
-MLX VoiceOps is an active local-first prototype. The end-to-end Mac and
+inVoice is an active local-first prototype. The end-to-end Mac and
 ESP32-S3 path is working, including dock-safe push-to-talk, hot-plug microphone
 fallback, one-shot text delivery, and button-free subsequent OTA. Startup
 latency and recognition quality still depend on the Mac, language mix, and

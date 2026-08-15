@@ -19,11 +19,15 @@
 #define INPUT_DEBOUNCE_SAMPLES \
     ((INPUT_DEBOUNCE_MS + INPUT_SCAN_MS - 1) / INPUT_SCAN_MS)
 #define CONTROL_STATE_SYNC_MS 250
+#define TOUCH_HOLD_MS 250
+#define TOUCH_DOUBLE_CLICK_MS 650
+#define SUBMIT_PULSE_MS 40
 
 static const char *TAG = "mlx_voice_mic";
 static atomic_bool s_ui_ready;
 static atomic_bool s_usb_mounted;
 static atomic_bool s_clipboard_pressed;
+static atomic_bool s_submit_pressed;
 static atomic_bool s_touch_pressed_raw;
 static atomic_uint s_trigger_sources;
 static SemaphoreHandle_t s_trigger_mutex;
@@ -69,13 +73,15 @@ static bool set_trigger_source(trigger_source_t source, bool pressed, bool force
         } else {
             ret = uac_device_send_controls(
                 true,
-                atomic_load(&s_clipboard_pressed)
+                atomic_load(&s_clipboard_pressed),
+                atomic_load(&s_submit_pressed)
             );
         }
     } else if (current_sources != 0 && next_sources == 0) {
         ret = uac_device_send_controls(
             false,
-            atomic_load(&s_clipboard_pressed)
+            atomic_load(&s_clipboard_pressed),
+            atomic_load(&s_submit_pressed)
         );
     }
 
@@ -110,7 +116,8 @@ static bool set_clipboard_pressed(bool pressed, bool force)
     } else {
         ret = uac_device_send_controls(
             atomic_load(&s_trigger_sources) != 0,
-            pressed
+            pressed,
+            atomic_load(&s_submit_pressed)
         );
     }
 
@@ -123,6 +130,47 @@ static bool set_clipboard_pressed(bool pressed, bool force)
     return ret == ESP_OK || force;
 }
 
+static bool set_submit_pressed(bool pressed, bool force)
+{
+    if (xSemaphoreTake(s_trigger_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return false;
+    }
+
+    const bool current = atomic_load(&s_submit_pressed);
+    if (current == pressed) {
+        xSemaphoreGive(s_trigger_mutex);
+        return true;
+    }
+
+    esp_err_t ret = ESP_OK;
+    if (!atomic_load(&s_usb_mounted)) {
+        ret = ESP_ERR_INVALID_STATE;
+    } else {
+        ret = uac_device_send_controls(
+            atomic_load(&s_trigger_sources) != 0,
+            atomic_load(&s_clipboard_pressed),
+            pressed
+        );
+    }
+
+    if (ret == ESP_OK || force) {
+        atomic_store(&s_submit_pressed, force ? false : pressed);
+        ESP_LOGI(TAG, "Codex submit %s",
+                 (!force && pressed) ? "pressed" : "released");
+    }
+    xSemaphoreGive(s_trigger_mutex);
+    return ret == ESP_OK || force;
+}
+
+static void pulse_submit(void)
+{
+    if (!set_submit_pressed(true, false)) {
+        return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(SUBMIT_PULSE_MS));
+    (void)set_submit_pressed(false, false);
+}
+
 static void sync_control_state(void)
 {
     if (!atomic_load(&s_usb_mounted) ||
@@ -131,7 +179,8 @@ static void sync_control_state(void)
     }
     (void)uac_device_send_controls(
         atomic_load(&s_trigger_sources) != 0,
-        atomic_load(&s_clipboard_pressed)
+        atomic_load(&s_clipboard_pressed),
+        atomic_load(&s_submit_pressed)
     );
     xSemaphoreGive(s_trigger_mutex);
 }
@@ -231,6 +280,7 @@ static void uac_event_cb(uac_device_event_t event, void *context)
         atomic_store(&s_usb_mounted, false);
         set_trigger_source((trigger_source_t)atomic_load(&s_trigger_sources), false, true);
         set_clipboard_pressed(false, true);
+        set_submit_pressed(false, true);
         if (atomic_load(&s_ui_ready)) {
             jam_ui_set_usb_connected(false);
         }
@@ -267,16 +317,52 @@ static void physical_button_task(void *context)
     input_debouncer_t touch_debouncer = {0};
     input_debouncer_t pwr_debouncer = {0};
     input_debouncer_t boot_debouncer = {0};
+    bool touch_was_pressed = false;
+    bool touch_hold_active = false;
+    bool touch_tap_pending = false;
+    TickType_t touch_pressed_at = 0;
+    TickType_t first_tap_released_at = 0;
     TickType_t last_control_sync = xTaskGetTickCount();
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(INPUT_SCAN_MS));
 
+        const TickType_t now = xTaskGetTickCount();
+
         const bool touch_pressed = debounce_input(
             &touch_debouncer, atomic_load(&s_touch_pressed_raw));
-        const bool touch_active =
-            (atomic_load(&s_trigger_sources) & TRIGGER_SOURCE_TOUCH) != 0;
-        if (touch_pressed != touch_active) {
-            set_trigger_source(TRIGGER_SOURCE_TOUCH, touch_pressed, false);
+        if (touch_pressed && !touch_was_pressed) {
+            touch_was_pressed = true;
+            touch_hold_active = false;
+            touch_pressed_at = now;
+        } else if (!touch_pressed && touch_was_pressed) {
+            touch_was_pressed = false;
+            if (touch_hold_active) {
+                (void)set_trigger_source(TRIGGER_SOURCE_TOUCH, false, false);
+                touch_hold_active = false;
+            } else if (touch_tap_pending &&
+                       now - first_tap_released_at <=
+                           pdMS_TO_TICKS(TOUCH_DOUBLE_CLICK_MS)) {
+                touch_tap_pending = false;
+                pulse_submit();
+            } else {
+                touch_tap_pending = true;
+                first_tap_released_at = now;
+            }
+        }
+
+        if (touch_pressed && !touch_hold_active &&
+            now - touch_pressed_at >= pdMS_TO_TICKS(TOUCH_HOLD_MS)) {
+            // A long second touch belongs to PTT, not to the pending tap pair.
+            touch_tap_pending = false;
+            touch_hold_active = true;
+            (void)set_trigger_source(TRIGGER_SOURCE_TOUCH, true, false);
+        }
+
+        if (touch_tap_pending && !touch_pressed &&
+            now - first_tap_released_at >
+                pdMS_TO_TICKS(TOUCH_DOUBLE_CLICK_MS)) {
+            // A single short screen tap is intentionally a no-op.
+            touch_tap_pending = false;
         }
 
         const bool boot_pressed = debounce_input(
@@ -298,7 +384,6 @@ static void physical_button_task(void *context)
             }
         }
 
-        const TickType_t now = xTaskGetTickCount();
         if (now - last_control_sync >= pdMS_TO_TICKS(CONTROL_STATE_SYNC_MS)) {
             sync_control_state();
             last_control_sync = now;
@@ -311,6 +396,7 @@ void app_main(void)
     atomic_store(&s_ui_ready, false);
     atomic_store(&s_usb_mounted, false);
     atomic_store(&s_clipboard_pressed, false);
+    atomic_store(&s_submit_pressed, false);
     atomic_store(&s_touch_pressed_raw, false);
     atomic_store(&s_trigger_sources, 0);
     s_trigger_mutex = xSemaphoreCreateMutex();
@@ -354,5 +440,5 @@ void app_main(void)
     }
 
     xTaskCreate(physical_button_task, "physical_buttons", 3072, NULL, 4, NULL);
-    ESP_LOGI(TAG, "MLX Voice Mic ready: hold touch/PWR to talk; press BOOT for clipboard");
+    ESP_LOGI(TAG, "MLX Voice Mic ready: hold touch/PWR to talk; double-tap touch to submit; press BOOT for clipboard");
 }

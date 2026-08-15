@@ -188,7 +188,7 @@ final class ClipboardHistoryViewModel: ObservableObject {
     }
 
     func metaText(for item: ClipboardItem) -> String {
-        let source = item.source == .voiceops ? "VoiceOps" : "System"
+        let source = item.source == .voiceops ? "inVoice" : "System"
         let time = relativeTimeString(timestampMs: item.timestamp)
         if item.type == .image, let meta = imageMeta(for: item) {
             return "\(source) · \(time) · \(meta)"

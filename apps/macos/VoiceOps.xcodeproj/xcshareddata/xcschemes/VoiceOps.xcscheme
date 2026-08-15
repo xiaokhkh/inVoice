@@ -15,7 +15,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "7A9E48824B569580007A051A"
-               BuildableName = "VoiceOps.app"
+               BuildableName = "inVoice.app"
                BlueprintName = "VoiceOps"
                ReferencedContainer = "container:VoiceOps.xcodeproj">
             </BuildableReference>
@@ -31,7 +31,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "7A9E48824B569580007A051A"
-            BuildableName = "VoiceOps.app"
+            BuildableName = "inVoice.app"
             BlueprintName = "VoiceOps"
             ReferencedContainer = "container:VoiceOps.xcodeproj">
          </BuildableReference>
@@ -54,7 +54,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "7A9E48824B569580007A051A"
-            BuildableName = "VoiceOps.app"
+            BuildableName = "inVoice.app"
             BlueprintName = "VoiceOps"
             ReferencedContainer = "container:VoiceOps.xcodeproj">
          </BuildableReference>
@@ -71,7 +71,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "7A9E48824B569580007A051A"
-            BuildableName = "VoiceOps.app"
+            BuildableName = "inVoice.app"
             BlueprintName = "VoiceOps"
             ReferencedContainer = "container:VoiceOps.xcodeproj">
          </BuildableReference>

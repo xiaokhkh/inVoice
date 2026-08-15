@@ -1,10 +1,16 @@
-# MLX VoiceOps
+# inVoice
 
 中文 · [English](README.en.md)
 
-![使用 ESP32-S3 Touch AMOLED 作为 MLX VoiceOps 按住说话麦克风](docs/assets/voiceops-hardware-use-case.png)
+<p align="center">
+  <img src="apps/macos/VoiceOps/Assets.xcassets/AppIcon.appiconset/invoice_icon_256.png" width="112" alt="inVoice 图标">
+</p>
 
-MLX VoiceOps 是一款本地优先的 macOS 菜单栏语音工具，用于语音输入、翻译和
+> 按住按键，自然说话，松开后，润色好的文字直接出现在光标处。
+
+![使用 ESP32-S3 Touch AMOLED 作为 inVoice 按住说话麦克风](docs/assets/voiceops-hardware-use-case.png)
+
+inVoice 是一款本地优先的 macOS 菜单栏语音工具，用于语音输入、翻译和
 写作辅助。既可以按住 Mac 的 `Fn`，也可以接入圆形 Waveshare ESP32-S3
 收音器并按住屏幕：说话、松开，最终文字只会插入一次到原来的应用。
 
@@ -12,7 +18,7 @@ MLX VoiceOps 是一款本地优先的 macOS 菜单栏语音工具，用于语音
 sherpa-onnx 和 Ollama。只有安装依赖和下载模型时需要联网。
 
 > 默认提示词会把中文语音整理成自然英文。语音、翻译和行动摘要提示词都可在
-> Preferences 中修改。
+> inVoice Settings 中修改。
 
 ## 项目一览
 
@@ -31,11 +37,12 @@ sherpa-onnx 和 Ollama。只有安装依赖和下载模型时需要联网。
 | --- | --- | --- | --- |
 | 语音输入 | 按住 `Fn`，说完松开 | 按住屏幕或 PWR，说完松开 | 实时预览、最终识别、可选改写并插入一次 |
 | 剪贴板历史 | `Command + Fn` | 按一下 BOOT | 切换可搜索的剪贴板面板 |
+| 提交 Codex 输入 | 按 `Return` | 双击屏幕 | 仅在 Codex 位于前台且语音已空闲时提交一次 |
 | 翻译选中文字 | `Command + Option + T` | — | 打开流式本地翻译面板 |
 | 设置 | `Command + Option + P` | — | 打开权限、模型和提示词设置 |
 
 开发板连接时，每个新录音 Session 都会优先选择它的 USB 麦克风；拔掉后，
-下一次录音自动回退到当前 macOS 输入。板端 F13/F14 只接受指定 USB
+下一次录音自动回退到当前 macOS 输入。板端 F13/F14/F15 只接受指定 USB
 VID/PID 的 HID 报告，因此扩展坞或其他键盘不会制造第二份录音。
 
 ## 支持的收音器硬件
@@ -43,16 +50,16 @@ VID/PID 的 HID 报告，因此扩展坞或其他键盘不会制造第二份录�
 仓库内固件面向 **Waveshare ESP32-S3-Touch-AMOLED-1.75** 标准版，
 型号 **SKU 31261**。这是初代 1.75 英寸开发板，不是后续的 `1.75C`。
 
-| 部件 | 具体型号 / 规格 | 在 VoiceOps 中的用途 |
+| 部件 | 具体型号 / 规格 | 在 inVoice 中的用途 |
 | --- | --- | --- |
 | 开发板 | `ESP32-S3-Touch-AMOLED-1.75`，SKU `31261` | 已实测的固件目标 |
 | SoC | `ESP32-S3R8`，双核 LX7，最高 240 MHz | USB Audio、HID、OTA、UI 和音频采集 |
 | 内存 | 8 MB PSRAM + 外置 16 MB Flash | 双 OTA 槽和保留的 Jam 资源 |
 | AMOLED | 1.75 英寸、466×466、`CO5300`、QSPI | Jam 动画与整圈绿色音量环 |
-| 触摸 | `CST9217`、I2C | 屏幕按住说话 |
+| 触摸 | `CST9217`、I2C | 屏幕按住说话与双击提交 Codex |
 | 音频 ADC | `ES7210`、板载双麦克风 | 24 kHz、单声道、16-bit USB 音频流 |
 | 电源 / I/O | `AXP2101` + `TCA9554` | PWR 输入、电源管理与 GPIO 扩展 |
-| 传感器 | `QMI8658` IMU + `PCF85063` RTC | 板上自带，VoiceOps 当前不依赖 |
+| 传感器 | `QMI8658` IMU + `PCF85063` RTC | 板上自带，inVoice 当前不依赖 |
 
 Waveshare 还列出了带壳版 `-B`（SKU `31262`）和 GPS 版 `-G`
 （SKU `31264`）。它们是官方变体，但项目目前只对 SKU `31261` 做回归验证。
@@ -67,6 +74,8 @@ Waveshare 还列出了带壳版 `-B`（SKU `31262`）和 GPS 版 `-G`
 
 - 按住屏幕或 PWR，开发板发送私有 F13 按住说话状态。
 - 松开后结束同一录音；自然人声永远不会自行触发 Session。
+- 短按一次屏幕不执行动作；650 ms 内双击屏幕才发送一次私有 F15。Mac
+  仅在 Codex 位于前台且语音 Session 不在录音或处理时，将它转换为一次 Return。
 - 仅按住期间，保留的 Jam 表情切换到 thinking，绿色音量环绕整块圆屏显示。
 - 正常运行时按一下 BOOT，发送 F14 并切换剪贴板历史面板。
 - 设备名为 `MLX Voice Mic`，同时提供 USB Audio、键盘 HID 和独立厂商
@@ -91,7 +100,7 @@ flowchart LR
     H --> I["剪贴板历史"]
 ```
 
-预览窗口不会抢走键盘焦点。VoiceOps 会在录音开始时记录前台应用；只有该应用
+预览窗口不会抢走键盘焦点。inVoice 会在录音开始时记录前台应用；只有该应用
 仍在前台时，才通过 private event source 发送一次 Cmd+V。若焦点已经变化或
 事件投递不可用，最终文字会保留在剪贴板供手动恢复。
 
@@ -112,24 +121,24 @@ flowchart LR
 先安装并打开 Ollama，然后运行：
 
 ```bash
-git clone https://github.com/xiaokhkh/mlx-voiceops.git
-cd mlx-voiceops
+git clone https://github.com/xiaokhkh/inVoice.git
+cd inVoice
 ./scripts/install.sh
 ```
 
 安装器可以重复执行。它会准备两个 Python 环境、下载缺失的 ASR 模型、准备
 默认 Ollama 模型、构建 Release App、安装到
-`~/Applications/VoiceOps.app`、记录 sidecar 路径并启动 VoiceOps。
+`~/Applications/inVoice.app`、记录 sidecar 路径并启动 inVoice。
 
 ### 首次运行
 
-1. 打开 Preferences → **Permissions**。
+1. 打开 **inVoice Settings** → **Permissions**。
 2. 分别授予一次 **输入监控**、**辅助功能**和**麦克风**权限。
-3. 回到 VoiceOps，点击 **Refresh Status**。
+3. 回到 inVoice，点击 **Refresh Status**。
 4. 确认权限与 Local Runtime 项目全部为绿色。
 5. 聚焦任意文本框，按住 `Fn` 或开发板屏幕，说话后松开。
 
-权限请求只由对应设置按钮或语音操作触发，VoiceOps 启动时不会重复弹窗。
+权限请求只由对应设置按钮或语音操作触发，inVoice 启动时不会重复弹窗。
 
 ## 安装和更新板端固件
 
@@ -190,7 +199,7 @@ idf.py -p /dev/cu.usbmodemXXXX flash
 
 --skip-models       保留已有 ASR 模型并跳过下载
 --skip-ollama       跳过 Ollama 检查和模型拉取
---no-launch         安装后不打开 VoiceOps
+--no-launch         安装后不打开 inVoice
 --install-dir PATH  安装到 ~/Applications 以外的位置
 --python PATH       使用指定的 Python 3.9+ 可执行文件
 ```
@@ -220,7 +229,7 @@ idf.py -p /dev/cu.usbmodemXXXX flash
 | 运行日志 | Sidecar 标准输出与错误 | `~/Library/Logs/VoiceOps/` |
 
 首次配置完成后，语音识别和 LLM 处理都通过只监听本机回环地址的服务完成。
-提示词模板保存在 macOS user defaults，可在 Preferences → LLM 中编辑。
+提示词模板保存在 macOS user defaults，可在 inVoice Settings → LLM 中编辑。
 
 ## 开发
 
@@ -249,6 +258,10 @@ xcodebuild -project apps/macos/VoiceOps.xcodeproj \
 
 人工回归清单见 [docs/TESTING.md](docs/TESTING.md)。
 
+面向用户的产品名与 App 文件名已统一为 `inVoice`。Xcode target、bundle ID
+以及内部 `VoiceOps` 支持/日志目录暂时保留原名，以便升级时继续沿用 macOS
+权限和本地数据。
+
 ### 本地端点
 
 | 服务 | 端口 | 端点 |
@@ -274,6 +287,6 @@ docs/                                   协议、交接、测试和图片资源
 
 ## 项目状态
 
-MLX VoiceOps 仍是活跃开发中的本地优先原型。Mac 与 ESP32-S3 的端到端链路
+inVoice 仍是活跃开发中的本地优先原型。Mac 与 ESP32-S3 的端到端链路
 已经可用，包括扩展坞防抖、热插拔麦克风回退、一次性文字投递和后续免按键 OTA。
 启动速度和识别效果仍会受到 Mac 性能、语言混合方式和本地模型选择影响。

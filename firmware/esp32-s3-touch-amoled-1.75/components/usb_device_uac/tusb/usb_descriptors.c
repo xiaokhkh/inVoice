@@ -99,7 +99,7 @@ uint8_t const desc_configuration[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
     // Interface number, string index, EP Out & EP In address, EP size
     TUD_AUDIO_DESCRIPTOR(ITF_NUM_AUDIO_CONTROL, 4, EPNUM_AUDIO_OUT, EPNUM_AUDIO_IN, EPNUM_AUDIO_FB),
-    // A dedicated keyboard interface emits VoiceOps F13/F14 control reports.
+    // A dedicated keyboard interface emits VoiceOps F13/F14/F15 control reports.
     TUD_HID_DESCRIPTOR(ITF_NUM_HID_TRIGGER, 6, HID_ITF_PROTOCOL_KEYBOARD,
                        sizeof(desc_hid_report), EPNUM_HID_IN, HID_KEYBOARD_EP_SIZE, 10),
     // USB-only updater; this interface never emits keyboard reports.

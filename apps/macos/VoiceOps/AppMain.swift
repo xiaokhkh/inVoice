@@ -4,7 +4,7 @@ import Combine
 import SwiftUI
 
 @main
-struct VoiceOpsApp: App {
+struct InVoiceApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
@@ -15,10 +15,12 @@ struct VoiceOpsApp: App {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let didShowFirstRunPreferencesKey = "didShowFirstRunPreferences"
-    private let statusIdleTitle = "konh"
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    private let didShowWelcomeKey = "didShowInVoiceWelcome"
+    private let statusIdleTitle = "inVoice"
     private var statusItem: NSStatusItem?
+    private var dictationMenuItem: NSMenuItem?
+    private var setupSummaryMenuItem: NSMenuItem?
     private var panel: OverlayPanel?
     private var previewPanel: PreviewPanel?
     private let previewModel = PreviewModel()
@@ -30,12 +32,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var preferencesHotKey: HotKeyService?
     private let fnMonitor = FnKeyMonitor()
     private let fnSession = FnSessionController()
+    private let codexSubmitter = CodexSubmitService()
     private let clipboardObserver = ClipboardObserver.shared
     private let clipboardPanel = ClipboardHistoryPanelController.shared
     private let translatePanel = SelectionTranslationPanelController.shared
     private let sidecarLauncher = SidecarLauncher.shared
     private let selectionCapture = SelectionCaptureService.shared
     private var fnHoldActive = false
+    private var voiceSessionBusy = false
     private var cancellables = Set<AnyCancellable>()
 
     private let pipeline = PipelineController()
@@ -53,11 +57,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sidecarLauncher.startAll()
 
         let defaults = UserDefaults.standard
-        let isFirstRun = !defaults.bool(forKey: didShowFirstRunPreferencesKey)
+        let isFirstRun = !defaults.bool(forKey: didShowWelcomeKey)
         if isFirstRun {
-            defaults.set(true, forKey: didShowFirstRunPreferencesKey)
+            defaults.set(true, forKey: didShowWelcomeKey)
         }
-        if isFirstRun || ProcessInfo.processInfo.environment["VOICEOPS_OPEN_PREFERENCES"] == "1" {
+        if isFirstRun
+            || ProcessInfo.processInfo.environment["INVOICE_OPEN_SETTINGS"] == "1"
+            || ProcessInfo.processInfo.environment["VOICEOPS_OPEN_PREFERENCES"] == "1" {
             DispatchQueue.main.async { [weak self] in
                 self?.openPreferences()
             }
@@ -76,16 +82,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = statusIdleTitle
+        item.button?.toolTip = "inVoice · Private voice tools"
 
         let menu = NSMenu()
-        let preferencesItem = NSMenuItem(title: "Preferences...", action: #selector(openPreferences), keyEquivalent: ",")
-        let revealItem = NSMenuItem(title: "Reveal App in Finder", action: #selector(revealApp), keyEquivalent: "")
-        let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
+        menu.delegate = self
 
+        let dictationItem = NSMenuItem(title: "Start Dictation…", action: #selector(toggleDictation), keyEquivalent: "")
+        let clipboardItem = NSMenuItem(title: "Clipboard History…", action: #selector(showClipboardHistory), keyEquivalent: "")
+        let translateItem = NSMenuItem(title: "Translate Selection…", action: #selector(translateSelection), keyEquivalent: "")
+        let setupItem = NSMenuItem(title: setupSummary, action: nil, keyEquivalent: "")
+        let preferencesItem = NSMenuItem(title: "inVoice Settings…", action: #selector(openPreferences), keyEquivalent: ",")
+        let revealItem = NSMenuItem(title: "Reveal App in Finder", action: #selector(revealApp), keyEquivalent: "")
+        let quitItem = NSMenuItem(title: "Quit inVoice", action: #selector(quitApp), keyEquivalent: "q")
+
+        dictationItem.target = self
+        clipboardItem.target = self
+        translateItem.target = self
         preferencesItem.target = self
         revealItem.target = self
         quitItem.target = self
+        setupItem.isEnabled = false
 
+        menu.addItem(dictationItem)
+        menu.addItem(clipboardItem)
+        menu.addItem(translateItem)
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(setupItem)
         menu.addItem(preferencesItem)
         menu.addItem(revealItem)
         menu.addItem(NSMenuItem.separator())
@@ -93,10 +115,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         item.menu = menu
         statusItem = item
+        dictationMenuItem = dictationItem
+        setupSummaryMenuItem = setupItem
     }
 
     private func setupOverlay() {
-        let view = OverlayView().environmentObject(pipeline)
+        let view = OverlayView(onOpenSettings: { [weak self] in
+            self?.openPreferences()
+        }).environmentObject(pipeline)
         panel = OverlayPanel(rootView: view)
         panel?.onSubmit = { [weak self] in
             self?.pipeline.insertToFocusedApp()
@@ -180,6 +206,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fnMonitor.onClipboardToggle = { [weak self] in
             self?.clipboardPanel.toggle()
         }
+        fnMonitor.onBoardSubmit = { [weak self] in
+            self?.handleBoardSubmit()
+        }
         fnMonitor.onTranslateSelection = { [weak self] in
             self?.handleTranslateSelection()
         }
@@ -219,6 +248,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fnSession.endSession()
     }
 
+    private func handleBoardSubmit() {
+        guard !voiceSessionBusy else {
+            NSLog("[codex_submit] ignored reason=voice_session_busy")
+            return
+        }
+        clipboardPanel.hide()
+        panel?.hide()
+        switch codexSubmitter.submitIfCodexFrontmost() {
+        case .submitted, .ignoredDifferentApp, .eventCreationFailed:
+            break
+        case .deniedAccessibility:
+            openPreferences()
+        }
+    }
+
     private func handleTranslateSelection() {
         clipboardPanel.hide()
         panel?.hide()
@@ -238,14 +282,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateStatusIndicator(_ state: FnSessionController.IndicatorState) {
         switch state {
         case .idle:
+            voiceSessionBusy = false
             previewModel.state = .idle
+            setStatusTitle(statusIdleTitle)
             if !fnHoldActive {
                 previewPanel?.hide()
             }
         case .recording:
+            voiceSessionBusy = true
             previewModel.state = .recording
+            setStatusTitle("inVoice •")
         case .processing:
+            voiceSessionBusy = true
             previewModel.state = .processing
+            setStatusTitle("inVoice …")
         }
     }
 
@@ -257,6 +307,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.panel?.hide()
                     return
                 }
+                self?.updatePipelineStatus(state)
                 switch state {
                 case .idle:
                     self?.panel?.hide()
@@ -265,6 +316,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             .store(in: &cancellables)
+    }
+
+    private func updatePipelineStatus(_ state: PipelineController.State) {
+        switch state {
+        case .idle:
+            setStatusTitle(statusIdleTitle)
+            dictationMenuItem?.title = "Start Dictation…"
+            dictationMenuItem?.isEnabled = true
+        case .recording:
+            setStatusTitle("inVoice •")
+            dictationMenuItem?.title = "Stop & Process"
+            dictationMenuItem?.isEnabled = true
+        case .transcribing, .generating:
+            setStatusTitle("inVoice …")
+            dictationMenuItem?.title = "Processing…"
+            dictationMenuItem?.isEnabled = false
+        case .ready:
+            setStatusTitle("inVoice ✓")
+            dictationMenuItem?.title = "Start New Dictation…"
+            dictationMenuItem?.isEnabled = true
+        case .error:
+            setStatusTitle("inVoice !")
+            dictationMenuItem?.title = "Try Dictation Again…"
+            dictationMenuItem?.isEnabled = true
+        }
+    }
+
+    private func setStatusTitle(_ title: String) {
+        statusItem?.button?.title = title
+    }
+
+    private var setupSummary: String {
+        let permissionsReady = Permissions.hasAccessibility()
+            && Permissions.hasInputMonitoring()
+            && Permissions.hasMicrophoneAccess()
+        return permissionsReady && sidecarLauncher.installationStatus().isReady
+            ? "● Ready · Processing stays on this Mac"
+            : "○ Finish setup in inVoice Settings"
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        setupSummaryMenuItem?.title = setupSummary
+    }
+
+    @objc private func toggleDictation() {
+        clipboardPanel.hide()
+        translatePanel.hide()
+        pipeline.toggleRecord()
+    }
+
+    @objc private func showClipboardHistory() {
+        panel?.hide()
+        translatePanel.hide()
+        clipboardPanel.toggle()
+    }
+
+    @objc private func translateSelection() {
+        handleTranslateSelection()
     }
 
     @objc private func quitApp() {
@@ -291,8 +400,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func makeSettingsWindowController() -> NSWindowController {
         let hostingController = NSHostingController(rootView: PreferencesView())
         let window = NSWindow(contentViewController: hostingController)
-        window.title = "Preferences"
-        window.setContentSize(NSSize(width: 560, height: 420))
+        window.title = "inVoice Settings"
+        window.setContentSize(NSSize(width: 700, height: 620))
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.isReleasedWhenClosed = false
         window.center()
@@ -337,12 +446,12 @@ struct HotKeySettingsView: View {
             VStack(alignment: .leading, spacing: 18) {
                 PreferencesHeader(
                     title: "Shortcuts",
-                    subtitle: "Control how you start recording, search clipboard, and translate selections."
+                    subtitle: "Choose the gestures that make inVoice feel effortless everywhere on your Mac."
                 )
 
-                SectionCard(title: "Preferences", subtitle: "Open settings even when the menu bar item is hidden.") {
+                SectionCard(title: "Settings", subtitle: "Open inVoice even when the menu bar item is hidden.") {
                     HStack {
-                        Text("Open Preferences")
+                        Text("Open inVoice Settings")
                             .font(.headline)
                         Spacer()
                         Text("Command+Option+P")
@@ -402,35 +511,229 @@ struct HotKeySettingsView: View {
 }
 
 struct PreferencesView: View {
-    @State private var selectedTab: Int
-
-    init() {
-        let needsPermission = !Permissions.hasAccessibility()
-            || !Permissions.hasInputMonitoring()
-            || !Permissions.hasMicrophoneAccess()
-        let needsRuntimeSetup = !SidecarLauncher.shared.installationStatus().isReady
-        _selectedTab = State(initialValue: needsPermission || needsRuntimeSetup ? 1 : 2)
-    }
+    @State private var selectedTab = 0
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            HotKeySettingsView()
+            WelcomeView(
+                onOpenShortcuts: { selectedTab = 1 },
+                onOpenPermissions: { selectedTab = 2 },
+                onOpenLLM: { selectedTab = 3 }
+            )
                 .tag(0)
+                .tabItem {
+                    Text("Welcome")
+                }
+            HotKeySettingsView()
+                .tag(1)
                 .tabItem {
                     Text("Shortcuts")
                 }
             PermissionsPanelView()
-                .tag(1)
+                .tag(2)
                 .tabItem {
                     Text("Permissions")
                 }
             PromptSettingsView()
-                .tag(2)
+                .tag(3)
                 .tabItem {
                     Text("LLM")
                 }
         }
-        .frame(minWidth: 620, minHeight: 560)
+        .frame(minWidth: 680, minHeight: 600)
+    }
+}
+
+struct WelcomeView: View {
+    let onOpenShortcuts: () -> Void
+    let onOpenPermissions: () -> Void
+    let onOpenLLM: () -> Void
+
+    @State private var accessibilityAllowed = Permissions.hasAccessibility()
+    @State private var inputMonitoringAllowed = Permissions.hasInputMonitoring()
+    @State private var microphoneAllowed = Permissions.hasMicrophoneAccess()
+    @State private var installationStatus = SidecarLauncher.shared.installationStatus()
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 18) {
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
+                        .frame(width: 76, height: 76)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Welcome to inVoice")
+                            .font(.largeTitle.weight(.bold))
+                        Text("Speak. Release. Keep typing.")
+                            .font(.title3)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 9) {
+                    HStack {
+                        Text(isReady ? "You're ready to use inVoice" : "A few steps, then you're ready")
+                            .font(.headline)
+                        Spacer()
+                        Text("\(completedSetupItems) of 4 complete")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    ProgressView(value: Double(completedSetupItems), total: 4)
+                        .tint(isReady ? .green : .accentColor)
+                }
+                .padding(16)
+                .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                SectionCard(title: "Finish setup", subtitle: "inVoice needs access only when a feature uses it.") {
+                    WelcomeSetupRow(
+                        icon: "keyboard",
+                        title: "Global shortcuts",
+                        detail: "Input Monitoring",
+                        isComplete: inputMonitoringAllowed
+                    )
+                    WelcomeSetupRow(
+                        icon: "text.cursor",
+                        title: "Insert text",
+                        detail: "Accessibility",
+                        isComplete: accessibilityAllowed
+                    )
+                    WelcomeSetupRow(
+                        icon: "mic",
+                        title: "Capture your voice",
+                        detail: "Microphone",
+                        isComplete: microphoneAllowed
+                    )
+                    WelcomeSetupRow(
+                        icon: "cpu",
+                        title: "Private local processing",
+                        detail: "ASR runtimes and models",
+                        isComplete: installationStatus.isReady
+                    )
+
+                    HStack {
+                        Button(isReady ? "Review Setup" : "Finish Setup") {
+                            onOpenPermissions()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        Button("Refresh") {
+                            refreshStatuses()
+                        }
+                        Spacer()
+                    }
+                }
+
+                SectionCard(title: "Three ways to save time", subtitle: "Every feature is available from the inVoice menu, even before you memorize a shortcut.") {
+                    WelcomeFeatureRow(
+                        icon: "waveform",
+                        title: "Dictate anywhere",
+                        detail: "Hold \(ActivationKeyPreference.load().displayString), speak, then release."
+                    )
+                    WelcomeFeatureRow(
+                        icon: "doc.on.clipboard",
+                        title: "Reuse anything",
+                        detail: "Search clipboard history with \(HotKeyPreference.load().displayString)."
+                    )
+                    WelcomeFeatureRow(
+                        icon: "character.bubble",
+                        title: "Translate in place",
+                        detail: "Select text and press \(TranslateHotKeyPreference.load().displayString)."
+                    )
+
+                    HStack {
+                        Button("Customize Shortcuts") {
+                            onOpenShortcuts()
+                        }
+                        Button("Tune Local AI") {
+                            onOpenLLM()
+                        }
+                        Spacer()
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    Image(systemName: "lock.shield.fill")
+                        .foregroundColor(.green)
+                    Text("Private by default: audio, text, clipboard history, and inference stay on this Mac after setup.")
+                        .font(.callout)
+                    Spacer()
+                }
+                .padding(14)
+                .background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .padding(22)
+        }
+        .onAppear(perform: refreshStatuses)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshStatuses()
+        }
+    }
+
+    private var completedSetupItems: Int {
+        [inputMonitoringAllowed, accessibilityAllowed, microphoneAllowed, installationStatus.isReady]
+            .filter { $0 }
+            .count
+    }
+
+    private var isReady: Bool {
+        completedSetupItems == 4
+    }
+
+    private func refreshStatuses() {
+        inputMonitoringAllowed = Permissions.hasInputMonitoring()
+        accessibilityAllowed = Permissions.hasAccessibility()
+        microphoneAllowed = Permissions.hasMicrophoneAccess()
+        installationStatus = SidecarLauncher.shared.installationStatus()
+    }
+}
+
+private struct WelcomeSetupRow: View {
+    let icon: String
+    let title: String
+    let detail: String
+    let isComplete: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .frame(width: 22)
+                .foregroundColor(isComplete ? .green : .secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+            Label(isComplete ? "Ready" : "Needed", systemImage: isComplete ? "checkmark.circle.fill" : "circle.dashed")
+                .font(.caption.weight(.medium))
+                .foregroundColor(isComplete ? .green : .orange)
+        }
+    }
+}
+
+private struct WelcomeFeatureRow: View {
+    let icon: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.accentColor)
+                .frame(width: 34, height: 34)
+                .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+        }
     }
 }
 

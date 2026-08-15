@@ -79,9 +79,29 @@ struct ClipboardHistoryView: View {
             ScrollView {
                 LazyVStack(spacing: 8) {
                     if viewModel.items.isEmpty {
-                        Text("No clipboard history yet")
+                        VStack(spacing: 10) {
+                            Image(systemName: viewModel.query.isEmpty ? "doc.on.clipboard" : "magnifyingglass")
+                                .font(.system(size: 30, weight: .light))
+                                .foregroundColor(.secondary)
+                            Text(viewModel.query.isEmpty ? "Your clipboard is ready" : "No matching clips")
+                                .font(.headline)
+                            Text(
+                                viewModel.query.isEmpty
+                                    ? "Copy text or an image in any app and it will appear here."
+                                    : "Try a different search or clear the current query."
+                            )
+                            .font(.caption)
                             .foregroundColor(.secondary)
-                            .padding(.vertical, 24)
+                            .multilineTextAlignment(.center)
+                            if !viewModel.query.isEmpty {
+                                Button("Clear Search") {
+                                    viewModel.clearQuery()
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 44)
                     } else {
                         ForEach(Array(viewModel.items.enumerated()), id: \.element.id) { index, item in
                             ClipboardItemRowView(
@@ -148,7 +168,7 @@ struct ClipboardHistoryView: View {
 
             Spacer()
 
-            Text("Cmd+C Copy | Enter Paste | Cmd+Delete")
+            Text("↑↓ Select  ·  ⌘C Copy  ·  ↩ Paste  ·  ⌘⌫ Delete")
                 .font(.caption2)
                 .foregroundColor(.secondary)
         }

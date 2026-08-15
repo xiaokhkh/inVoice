@@ -18,7 +18,7 @@ usage() {
 Usage: ./scripts/install.sh [options]
 
 Creates both Python environments, downloads the local ASR models, prepares
-Ollama, builds VoiceOps, installs it for the current user, and launches it.
+Ollama, builds inVoice, installs it for the current user, and launches it.
 
 Options:
   --skip-models       Do not download either ASR model.
@@ -35,11 +35,11 @@ EOF
 }
 
 log() {
-  printf '[VoiceOps] %s\n' "$*"
+  printf '[inVoice] %s\n' "$*"
 }
 
 fail() {
-  printf '[VoiceOps] ERROR: %s\n' "$*" >&2
+  printf '[inVoice] ERROR: %s\n' "$*" >&2
   exit 1
 }
 
@@ -84,7 +84,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ "$(uname -s)" == "Darwin" ]] || fail "VoiceOps requires macOS"
+[[ "$(uname -s)" == "Darwin" ]] || fail "inVoice requires macOS"
 if [[ "$(uname -m)" != "arm64" ]]; then
   log "Warning: Apple Silicon is recommended; MLX ASR may not run on $(uname -m)."
 fi
@@ -226,15 +226,15 @@ prepare_ollama() {
 
 install_app() {
   local project="$ROOT_DIR/apps/macos/VoiceOps.xcodeproj"
-  local source="$ROOT_DIR/apps/macos/Build/Release/VoiceOps.app"
-  local target="$INSTALL_DIR/VoiceOps.app"
+  local source="$ROOT_DIR/apps/macos/Build/Release/inVoice.app"
+  local target="$INSTALL_DIR/inVoice.app"
   local support="${HOME}/Library/Application Support/VoiceOps"
 
   log "Building the Release app"
   xcodebuild -project "$project" -scheme VoiceOps -configuration Release build -quiet
   [[ -d "$source" ]] || fail "Build completed without producing $source"
 
-  log "Installing VoiceOps at $target"
+  log "Installing inVoice at $target"
   mkdir -p "$INSTALL_DIR"
   ditto "$source" "$target"
   codesign --verify --deep --strict "$target"
@@ -265,5 +265,5 @@ fi
 
 install_app
 
-log "Installation complete. Open Preferences with Command+Option+P to grant permissions."
+log "Installation complete. Open inVoice Settings with Command+Option+P to finish setup."
 log "Run ./scripts/doctor.sh for a full readiness check."

@@ -29,17 +29,20 @@ serialization.
 - Hold Fn, the display, or PWR to start streaming; verify preview feedback updates but the focused field is not mutated yet.
 - Release Fn, the display, or PWR; verify exactly one final result is pasted.
 - Press BOOT after normal startup; verify it toggles clipboard history once without starting recording or showing the green level ring.
+- Tap the display once and release quickly; verify it neither records nor submits.
+- With Codex frontmost and dictation idle, double-tap the display; verify exactly one Return is delivered.
+- Double-tap the display while another app is frontmost or while dictation is busy; verify no Return is delivered.
 - Hold PWR while pressing BOOT; verify the clipboard toggle does not release the active F13 recording gesture.
 
 ## Dock and hot-plug regression
 
 - Connect the board through the dock without touching it; verify no recording starts.
-- Hold screen or PWR, then unplug the dock; verify VoiceOps ends the recording once and returns to idle.
-- Reconnect the dock without pressing a control; verify no stale F13/F14 state is replayed.
+- Hold screen or PWR, then unplug the dock; verify inVoice ends the recording once and returns to idle.
+- Reconnect the dock without pressing a control; verify no stale F13/F14/F15 state is replayed.
 - Hold and release screen/PWR through the dock; verify exactly one recording Session is created and ended.
-- Suspend and resume the dock while idle; verify VoiceOps remains idle.
-- Send F13/F14 from a different keyboard; verify it cannot create a board recording or open the board clipboard panel.
-- Inject or observe an input pulse shorter than 100 ms; verify it does not emit F13/F14 or create a Session.
+- Suspend and resume the dock while idle; verify inVoice remains idle.
+- Send F13/F14/F15 from a different keyboard; verify it cannot create a board action while direct VID/PID HID monitoring is active.
+- Inject or observe an input pulse shorter than 100 ms; verify it does not emit F13/F14/F15 or create a Session.
 - Confirm no overlay or focus change occurs during Fn hold.
 - If Accessibility is disabled, verify text is copied to clipboard and no injection occurs.
 - Release immediately during startup and confirm recording does not remain stuck.

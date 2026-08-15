@@ -1,4 +1,4 @@
-# VoiceOps ESP32-S3 USB OTA protocol
+# inVoice ESP32-S3 USB OTA protocol
 
 The microphone updates over the same USB Type-C cable used for audio and
 controls. It does not use Wi-Fi, a network service, or a separate 5-wire
@@ -23,11 +23,11 @@ Subsequent updates write only the inactive application slot.
 The composite USB device exposes three independent functions:
 
 - UAC microphone: 24 kHz, mono, 16-bit PCM;
-- keyboard HID: F13 push-to-talk and F14 clipboard panel;
+- keyboard HID: F13 push-to-talk, F14 clipboard panel, and F15 Codex submit;
 - vendor HID: usage page `0xFF00`, usage `0x0001`, 64-byte feature reports.
 
 The host binds keyboard controls to the same board VID/PID rather than treating
-global F13/F14 events as trusted input. Keyboard reports carry absolute state
+global F13/F14/F15 events as trusted input. Keyboard reports carry absolute state
 and are refreshed every 250 ms; host-side device removal clears all pressed
 state. This keeps dock suspend/resume and hot unplug from leaving dictation
 latched on.

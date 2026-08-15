@@ -1,11 +1,14 @@
+import AppKit
 import SwiftUI
 
 struct OverlayView: View {
     @EnvironmentObject private var pipeline: PipelineController
+    let onOpenSettings: () -> Void
     @AppStorage(ActivationKeyPreference.keyCodeDefaultsKey) private var activationKeyCode = Int(ActivationKeyPreference.defaultValue.keyCode)
     @AppStorage(ActivationKeyPreference.modifiersDefaultsKey) private var activationModifiers = Int(ActivationKeyPreference.defaultValue.modifiers)
     @AppStorage(HotKeyPreference.keyCodeDefaultsKey) private var clipboardKeyCode = Int(HotKeyPreference.defaultValue.keyCode)
     @AppStorage(HotKeyPreference.modifiersDefaultsKey) private var clipboardModifiers = Int(HotKeyPreference.defaultValue.modifiers)
+    @State private var didCopy = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -73,6 +76,18 @@ struct OverlayView: View {
                         pipeline.insertToFocusedApp()
                     }
                     .buttonStyle(.bordered)
+
+                    Button(didCopy ? "Copied" : "Copy") {
+                        copyResult()
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                if case .error = pipeline.state {
+                    Button("Open Settings") {
+                        onOpenSettings()
+                    }
+                    .buttonStyle(.bordered)
                 }
 
                 if pipeline.state != .idle {
@@ -120,7 +135,7 @@ struct OverlayView: View {
         case .ready:
             return "Enter to insert"
         case .error:
-            return "Check permissions"
+            return "Review setup or try again"
         }
     }
 
@@ -128,6 +143,8 @@ struct OverlayView: View {
         switch pipeline.state {
         case .recording:
             return "Stop"
+        case .error:
+            return "Try Again"
         default:
             return "Record"
         }
@@ -191,5 +208,17 @@ struct OverlayView: View {
 
     private var translateDisplay: String {
         TranslateHotKeyPreference.load().displayString
+    }
+
+    private func copyResult() {
+        let text = pipeline.output.isEmpty ? pipeline.transcript : pipeline.output
+        guard !text.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        didCopy = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            didCopy = false
+        }
     }
 }

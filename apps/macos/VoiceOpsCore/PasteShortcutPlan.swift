@@ -22,3 +22,26 @@ enum PasteShortcutPlan {
         ]
     }
 }
+
+enum CodexSubmitShortcutPlan {
+    static let targetBundleIdentifier = "com.openai.codex"
+
+    static func shouldSubmit(frontmostBundleIdentifier: String?) -> Bool {
+        frontmostBundleIdentifier == targetBundleIdentifier
+    }
+
+    static func events(returnKeyCode: UInt16) -> [PasteShortcutEvent] {
+        [
+            PasteShortcutEvent(
+                keyCode: returnKeyCode,
+                isKeyDown: true,
+                usesCommand: false
+            ),
+            PasteShortcutEvent(
+                keyCode: returnKeyCode,
+                isKeyDown: false,
+                usesCommand: false
+            )
+        ]
+    }
+}

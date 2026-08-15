@@ -24,13 +24,15 @@ targets:
     info:
       path: VoiceOps/Info.plist
       properties:
-        NSMicrophoneUsageDescription: VoiceOps needs microphone access to record audio.
+        CFBundleDisplayName: inVoice
+        NSMicrophoneUsageDescription: inVoice needs microphone access only while you dictate.
         LSUIElement: true
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.voiceops.VoiceOps
+        PRODUCT_NAME: inVoice
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual
         OTHER_CODE_SIGN_FLAGS: "--requirements $(SRCROOT)/VoiceOps/VoiceOps.requirements"
