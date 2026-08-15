@@ -1,0 +1,36 @@
+name: Hardware compatibility / 硬件兼容
+description: Report a board, USB, dock, microphone, touch, or firmware issue.
+title: "[Hardware] "
+body:
+  - type: input
+    id: board
+    attributes:
+      label: Board model and SKU
+      placeholder: Waveshare ESP32-S3-Touch-AMOLED-1.75, SKU 31261
+    validations:
+      required: true
+  - type: input
+    id: connection
+    attributes:
+      label: Connection path
+      placeholder: Direct USB-C, or dock model and cable
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Observed behavior
+      description: Include which control you used and the LED/display state.
+    validations:
+      required: true
+  - type: textarea
+    id: versions
+    attributes:
+      label: Firmware, inVoice, and macOS versions
+    validations:
+      required: true
+  - type: textarea
+    id: usb
+    attributes:
+      label: Sanitized USB or diagnostic output
+      render: shell

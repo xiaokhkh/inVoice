@@ -4,6 +4,7 @@
 xcuserdata/
 DerivedData/
 Build/
+dist/
 .build/
 .build_voiceops/
 .build_voiceops_dev/

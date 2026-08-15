@@ -1,0 +1,37 @@
+name: Feature request / 功能建议
+description: Describe a user problem or workflow inVoice could improve.
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: workflow
+    attributes:
+      label: What are you trying to do?
+      description: Describe the real task before proposing a UI or implementation.
+      placeholder: When I… I want… so that…
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: What do you do today?
+      description: Include the apps, language, and input method involved.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What would a good outcome feel like?
+    validations:
+      required: true
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often would you use it?
+      options:
+        - Many times a day
+        - A few times a week
+        - Occasionally
+    validations:
+      required: true

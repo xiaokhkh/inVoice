@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas / 问题与想法
+    url: https://github.com/xiaokhkh/inVoice/discussions
+    about: Ask for help, share a workflow, or discuss an early idea before filing an issue.

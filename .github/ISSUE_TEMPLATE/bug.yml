@@ -1,0 +1,55 @@
+name: Bug report / 缺陷反馈
+description: Report a repeatable problem in the macOS app or local runtime.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve inVoice. Please remove private text, audio, paths, and tokens from logs before attaching them.
+  - type: input
+    id: version
+    attributes:
+      label: inVoice version
+      description: Find this in the release filename or app Info panel.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: Mac and macOS
+      placeholder: MacBook Pro M3 Pro, macOS 15.6
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Tell us what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Focus…
+        2. Hold…
+        3. Release…
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Paste relevant output from ./scripts/doctor.sh or sanitized logs.
+      render: shell
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed private text, audio, local paths, and credentials.
+          required: true
