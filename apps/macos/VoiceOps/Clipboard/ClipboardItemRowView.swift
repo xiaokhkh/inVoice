@@ -52,10 +52,14 @@ struct ClipboardItemRowView: View {
             .foregroundColor(.secondary)
         }
         .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(isSelected ? Color(nsColor: .selectedContentBackgroundColor).opacity(0.35) : Color.clear)
-        )
+        .overlay(alignment: .leading) {
+            if isSelected {
+                Capsule()
+                    .fill(Color.primary.opacity(0.72))
+                    .frame(width: 2)
+                    .padding(.vertical, 6)
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture {
             onSelect()
