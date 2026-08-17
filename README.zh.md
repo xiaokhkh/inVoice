@@ -24,7 +24,11 @@
   <a href="LICENSE"><img alt="MIT 许可证" src="https://img.shields.io/badge/license-MIT-2563eb"></a>
 </p>
 
-![inVoice 真实产品导览：配置、快捷键、权限和本地模型状态](docs/assets/invoice-demo.gif)
+[![观看 inVoice 使用演示：GLM-ASR + LLM 润色、剪贴板历史和极简助手](docs/assets/invoice-usage-demo-poster.jpg)](docs/assets/invoice-usage-demo.mp4)
+
+**单屏使用演示：** `Fn` 语音输入（最终 **GLM-ASR 识别 + LLM 润色**）、
+可搜索剪贴板历史，以及 `Command + Option + T` 极简助手。
+[观看 MP4](docs/assets/invoice-usage-demo.mp4)。
 
 inVoice 是一款本地优先的 macOS 菜单栏语音工具，用于语音输入、翻译和
 写作辅助。按住 Mac 的 `Fn`，自然说话，松开后最终文字只会插入一次到
@@ -46,7 +50,7 @@ sherpa-onnx 和 Ollama。只有安装依赖和下载模型时需要联网。
 - **配置后数据不出 Mac。** 音频、转写、改写和剪贴板历史均留在本机，服务只监听回环地址。
 - **投递位置更安全。** 只有开始录音的原应用仍在前台时才粘贴；否则保留在剪贴板，
   避免文字误入其他窗口。
-- **不只是听写。** 同一个菜单栏应用还提供剪贴板搜索、选中翻译和本地写作提示词。
+- **不只是听写。** 同一个菜单栏应用还提供剪贴板搜索、极简本地对话和选中英文默认翻译。
 - **硬件完全可选。** 先用 Mac 键盘开始，只有在需要实体控制面时再添加 ESP32-S3 收音器。
 
 ## 项目一览
@@ -67,7 +71,7 @@ sherpa-onnx 和 Ollama。只有安装依赖和下载模型时需要联网。
 | 语音输入 | 按住 `Fn`，说完松开 | 按住屏幕或 PWR，说完松开 | 实时预览、最终识别、可选改写并插入一次 |
 | 剪贴板历史 | `Command + Fn` | 按一下 BOOT | 切换可搜索的剪贴板面板 |
 | 提交当前输入 | 按 `Return` | 短按屏幕 | 向当前前台应用发送一次标准 Return |
-| 翻译选中文字 | `Command + Option + T` | — | 打开流式本地翻译面板 |
+| 本地助手 | `Command + Option + T` | — | 打开极简本地对话框；若已选中英文，则默认翻译为简体中文 |
 | 设置 | `Command + Option + P` | — | 打开权限、模型和提示词设置 |
 
 开发板连接时，每个新录音 Session 都会优先选择它的 USB 麦克风；拔掉后，

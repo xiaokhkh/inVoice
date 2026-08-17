@@ -24,7 +24,11 @@ English · [中文](README.zh.md)
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-2563eb"></a>
 </p>
 
-![Real inVoice product tour: setup, shortcuts, permissions, and local model status](docs/assets/invoice-demo.gif)
+[![Watch the inVoice usage demo: GLM-ASR + LLM proofreading, clipboard history, and the minimal assistant](docs/assets/invoice-usage-demo-poster.jpg)](docs/assets/invoice-usage-demo.mp4)
+
+**One-screen usage demo:** `Fn` voice input with final **GLM-ASR + LLM
+proofreading**, searchable clipboard history, and the `Command + Option + T`
+minimal assistant. [Watch the MP4](docs/assets/invoice-usage-demo.mp4).
 
 inVoice is a local-first macOS menu bar app for voice input, translation,
 and writing assistance. Hold the Mac `Fn` key, speak naturally, then release:
@@ -73,7 +77,7 @@ dependencies and download models.
 | Voice input | Hold `Fn`, then release | Hold the display or PWR, then release | Preview, final recognition, optional rewrite, and one insertion |
 | Clipboard history | `Command + Fn` | Press BOOT once | Toggle the searchable clipboard panel |
 | Submit current input | Press `Return` | Short-tap the display | Send one standard Return to the frontmost application |
-| Translate selection | `Command + Option + T` | — | Open the streaming local translation panel |
+| Local assistant | `Command + Option + T` | — | Open a minimal local dialog; selected English is translated into Simplified Chinese by default |
 | Settings | `Command + Option + P` | — | Open setup, permissions, models, and prompts |
 
 When the board is connected, every new recording prefers its USB microphone.
