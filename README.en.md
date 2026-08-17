@@ -24,7 +24,7 @@ English · [中文](README.zh.md)
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-2563eb"></a>
 </p>
 
-[![Watch the inVoice usage demo: GLM-ASR + LLM proofreading, clipboard history, and the minimal assistant](docs/assets/invoice-usage-demo-poster.jpg)](docs/assets/invoice-usage-demo.mp4)
+![inVoice usage demo: GLM-ASR + LLM proofreading, clipboard history, and the minimal assistant](docs/assets/invoice-usage-demo.gif)
 
 **One-screen usage demo:** `Fn` voice input with final **GLM-ASR + LLM
 proofreading**, searchable clipboard history, and the `Command + Option + T`

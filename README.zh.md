@@ -24,7 +24,7 @@
   <a href="LICENSE"><img alt="MIT 许可证" src="https://img.shields.io/badge/license-MIT-2563eb"></a>
 </p>
 
-[![观看 inVoice 使用演示：GLM-ASR + LLM 润色、剪贴板历史和极简助手](docs/assets/invoice-usage-demo-poster.jpg)](docs/assets/invoice-usage-demo.mp4)
+![inVoice 使用演示：GLM-ASR + LLM 润色、剪贴板历史和极简助手](docs/assets/invoice-usage-demo.gif)
 
 **单屏使用演示：** `Fn` 语音输入（最终 **GLM-ASR 识别 + LLM 润色**）、
 可搜索剪贴板历史，以及 `Command + Option + T` 极简助手。
