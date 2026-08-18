@@ -324,6 +324,9 @@ static void physical_button_task(void *context)
     input_debouncer_t boot_debouncer = {0};
     bool touch_was_pressed = false;
     bool touch_hold_active = false;
+    bool pwr_pressed_raw = false;
+    bool pwr_armed = false;
+    bool pwr_wait_logged = false;
     TickType_t touch_pressed_at = 0;
     TickType_t last_control_sync = xTaskGetTickCount();
     while (true) {
@@ -364,16 +367,41 @@ static void physical_button_task(void *context)
         if (expander != NULL) {
             uint32_t level_mask = 0;
             if (esp_io_expander_get_level(expander, PWR_BUTTON_PIN, &level_mask) == ESP_OK) {
+                pwr_pressed_raw = (level_mask & PWR_BUTTON_PIN) != 0;
                 const bool pwr_pressed = debounce_input(
-                    &pwr_debouncer, (level_mask & PWR_BUTTON_PIN) != 0,
+                    &pwr_debouncer, pwr_pressed_raw,
                     BUTTON_DEBOUNCE_SAMPLES);
                 const bool pwr_active =
                     (atomic_load(&s_trigger_sources) & TRIGGER_SOURCE_PWR) != 0;
-                if (pwr_pressed != pwr_active) {
-                    set_trigger_source(TRIGGER_SOURCE_PWR, pwr_pressed, false);
+
+                // A dock or the PMIC can leave EXIO4 high while USB settles.
+                // Require a stable released level after every connection before
+                // treating a later high level as a real PWR press.
+                if (!atomic_load(&s_usb_mounted)) {
+                    pwr_armed = false;
+                    pwr_wait_logged = false;
+                    if (pwr_active) {
+                        set_trigger_source(TRIGGER_SOURCE_PWR, false, false);
+                    }
+                } else if (!pwr_pressed) {
+                    pwr_armed = true;
+                    pwr_wait_logged = false;
+                    if (pwr_active) {
+                        set_trigger_source(TRIGGER_SOURCE_PWR, false, false);
+                    }
+                } else if (pwr_armed && !pwr_active) {
+                    set_trigger_source(TRIGGER_SOURCE_PWR, true, false);
+                } else if (!pwr_armed && !pwr_wait_logged) {
+                    ESP_LOGW(TAG, "Ignoring PWR high until a stable release");
+                    pwr_wait_logged = true;
                 }
             }
         }
+
+        ota_update_set_input_diagnostics(
+            atomic_load(&s_trigger_sources),
+            atomic_load(&s_touch_pressed_raw), touch_pressed,
+            pwr_pressed_raw, pwr_debouncer.stable, pwr_armed);
 
         if (now - last_control_sync >= pdMS_TO_TICKS(CONTROL_STATE_SYNC_MS)) {
             sync_control_state();

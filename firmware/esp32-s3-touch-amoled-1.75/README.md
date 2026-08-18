@@ -62,7 +62,10 @@ dock suspend/resume cycle.
 Screen touches require 40 ms of continuous stable state so quick taps remain
 detectable, while PWR and BOOT retain their 100 ms filter. Display touches under
 250 ms send Return on release while a 250 ms hold starts PTT. Touch-controller
-glitches shorter than 40 ms remain filtered out.
+glitches shorter than 40 ms remain filtered out. Touch PTT follows the input
+device's absolute state instead of object-level release events. After boot or a
+USB reconnect, PWR must first report a stable released level before it is armed;
+a dock or PMIC line held high therefore cannot latch dictation on startup.
 
 ## Important
 

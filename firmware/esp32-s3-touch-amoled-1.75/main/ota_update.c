@@ -29,6 +29,15 @@ static QueueHandle_t s_request_queue;
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static voiceops_ota_response_t s_status;
 
+enum {
+    INPUT_DIAGNOSTIC_TRIGGER_SOURCES = 0,
+    INPUT_DIAGNOSTIC_TOUCH_RAW,
+    INPUT_DIAGNOSTIC_TOUCH_STABLE,
+    INPUT_DIAGNOSTIC_PWR_RAW,
+    INPUT_DIAGNOSTIC_PWR_STABLE,
+    INPUT_DIAGNOSTIC_PWR_ARMED,
+};
+
 static void copy_status(voiceops_ota_response_t *destination)
 {
     portENTER_CRITICAL(&s_status_lock);
@@ -320,6 +329,22 @@ esp_err_t ota_update_confirm_running_image(void)
 #else
     return ESP_OK;
 #endif
+}
+
+void ota_update_set_input_diagnostics(uint32_t trigger_sources,
+                                      bool touch_raw, bool touch_stable,
+                                      bool pwr_raw, bool pwr_stable,
+                                      bool pwr_armed)
+{
+    portENTER_CRITICAL(&s_status_lock);
+    s_status.reserved[INPUT_DIAGNOSTIC_TRIGGER_SOURCES] =
+        (uint8_t)trigger_sources;
+    s_status.reserved[INPUT_DIAGNOSTIC_TOUCH_RAW] = touch_raw ? 1U : 0U;
+    s_status.reserved[INPUT_DIAGNOSTIC_TOUCH_STABLE] = touch_stable ? 1U : 0U;
+    s_status.reserved[INPUT_DIAGNOSTIC_PWR_RAW] = pwr_raw ? 1U : 0U;
+    s_status.reserved[INPUT_DIAGNOSTIC_PWR_STABLE] = pwr_stable ? 1U : 0U;
+    s_status.reserved[INPUT_DIAGNOSTIC_PWR_ARMED] = pwr_armed ? 1U : 0U;
+    portEXIT_CRITICAL(&s_status_lock);
 }
 
 uint16_t ota_update_get_report(uint8_t report_id, uint8_t report_type,

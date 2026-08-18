@@ -299,6 +299,10 @@ static void print_response(const voiceops_ota_response_t *response)
     printf("progress: %" PRIu32 "/%" PRIu32 " bytes\n",
            response->next_offset, response->total_size);
     printf("last status: %s\n", status_name(response->status));
+    printf("input: sources=0x%02x touch=%u/%u pwr=%u/%u armed=%u\n",
+           response->reserved[0], response->reserved[1],
+           response->reserved[2], response->reserved[3],
+           response->reserved[4], response->reserved[5]);
 }
 
 static int run_status(void)
