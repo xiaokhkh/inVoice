@@ -123,8 +123,9 @@ and the [ESP32-S3 datasheet](https://www.espressif.com/sites/default/files/docum
 - While held, the preserved Jam character switches to its thinking state and a
   speech-sensitive green ring runs around the full display.
 - Behind the transparent Jam animation, the background and AMOLED brightness
-  move smoothly from a warm dawn through bright daylight to a dark-blue night.
-  The onboard RTC keeps this local-time rhythm while the board is disconnected.
+  move smoothly from a dark night to bright daylight and back, without changing
+  color themes. The onboard RTC keeps this local-time rhythm while the board is
+  disconnected.
 - Press BOOT during normal operation to send F14 and toggle clipboard history.
 - The board enumerates as `MLX Voice Mic`: USB Audio + keyboard HID + an
   independent vendor HID updater, VID/PID `0x303A:0x4002`.

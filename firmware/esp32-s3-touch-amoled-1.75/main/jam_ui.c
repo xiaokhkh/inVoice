@@ -34,15 +34,13 @@ typedef struct {
 } circadian_keyframe_t;
 
 static const circadian_keyframe_t s_circadian_keyframes[] = {
-    {   0, 0x121728,  28 }, // midnight
-    { 300, 0x2b3045,  38 }, // pre-dawn
-    { 360, 0xf4d8b8,  55 }, // warm sunrise
-    { 480, 0xf7f3e9,  82 }, // morning
-    { 720, 0xf8f5ed, 100 }, // noon
-    {1020, 0xf3e7d6,  86 }, // late afternoon
-    {1140, 0xc98e79,  60 }, // sunset
-    {1260, 0x30344b,  42 }, // evening
-    {1380, 0x161b2a,  30 }, // night
+    {   0, 0x17191e,  28 }, // darkest
+    { 360, 0x666762,  48 }, // dawn
+    { 540, 0xeae7df,  88 }, // daytime
+    { 720, 0xf7f3e9, 100 }, // brightest
+    {1080, 0xd4d1c9,  76 }, // dusk
+    {1260, 0x51535a,  45 }, // evening
+    {1380, 0x22242a,  32 }, // late night
 };
 
 static lv_obj_t *s_screen;

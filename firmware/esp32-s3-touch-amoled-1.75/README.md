@@ -44,12 +44,12 @@ or activate dictation by itself.
 The firmware disables the AXP2101 PWR-key long-press shutdown action so a long
 dictation cannot accidentally power the board off.
 
-The transparent Jam animation sits over a time-aware background. Color and
-AMOLED brightness interpolate continuously between midnight navy (28%), warm
-dawn, bright daytime ivory (up to 100%), sunset rose, and evening blue. The
-board reads local time from its `PCF85063` RTC every 30 seconds, so the look
-continues without a host connection. Until the RTC has a valid time, the UI
-uses the original daylight background at 100% brightness.
+The transparent Jam animation sits over a time-aware neutral background. Its
+lightness and the AMOLED brightness interpolate continuously from the darkest
+night setting (28%) to the brightest daylight setting (100%) and back, without
+switching color themes. The board reads local time from its `PCF85063` RTC every
+30 seconds, so the look continues without a host connection. Until the RTC has
+a valid time, the UI uses the original daylight background at 100% brightness.
 
 USB is exposed as a composite device: **MLX Voice Mic** (24 kHz, mono, 16-bit
 PCM), a keyboard HID interface, and an independent vendor HID firmware-update
