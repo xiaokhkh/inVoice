@@ -26,12 +26,14 @@ typedef enum {
 
 static lv_obj_t *s_image;
 static lv_obj_t *s_level_ring;
+static lv_indev_t *s_touch_indev;
 static lv_image_dsc_t s_image_descriptor;
 static gd_GIF *s_gif;
 static uint32_t s_last_frame_tick;
 static jam_state_t s_rendered_state = (jam_state_t)-1;
 static jam_ui_trigger_cb_t s_trigger_cb;
 static uint8_t s_displayed_level;
+static bool s_touch_pressed;
 
 static atomic_bool s_usb_connected;
 static atomic_bool s_muted;
@@ -147,6 +149,20 @@ static void gif_timer_cb(lv_timer_t *timer)
 static void ui_timer_cb(lv_timer_t *timer)
 {
     (void)timer;
+
+    // Read the pointer device's absolute state instead of relying on an LVGL
+    // object's RELEASED/PRESS_LOST event. A target change or redraw during a
+    // gesture can otherwise leave the pressed object without a matching
+    // release event and keep PTT asserted indefinitely.
+    const bool touch_pressed = s_touch_indev != NULL &&
+        lv_indev_get_state(s_touch_indev) == LV_INDEV_STATE_PRESSED;
+    if (touch_pressed != s_touch_pressed) {
+        s_touch_pressed = touch_pressed;
+        if (s_trigger_cb != NULL) {
+            s_trigger_cb(touch_pressed);
+        }
+    }
+
     const jam_state_t state = desired_state();
     if (state != s_rendered_state) {
         if (load_gif(state_asset(state)) != ESP_OK) {
@@ -173,26 +189,6 @@ static void ui_timer_cb(lv_timer_t *timer)
     }
 }
 
-static void trigger_event_cb(lv_event_t *event)
-{
-    if (s_trigger_cb == NULL) {
-        return;
-    }
-    const lv_event_code_t code = lv_event_get_code(event);
-    if (code == LV_EVENT_PRESSED) {
-        s_trigger_cb(true);
-    } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-        s_trigger_cb(false);
-    }
-}
-
-static void add_hold_events(lv_obj_t *object)
-{
-    lv_obj_add_event_cb(object, trigger_event_cb, LV_EVENT_PRESSED, NULL);
-    lv_obj_add_event_cb(object, trigger_event_cb, LV_EVENT_RELEASED, NULL);
-    lv_obj_add_event_cb(object, trigger_event_cb, LV_EVENT_PRESS_LOST, NULL);
-}
-
 esp_err_t jam_ui_init(lv_display_t *display, jam_ui_trigger_cb_t trigger_cb)
 {
     if (display == NULL) {
@@ -206,11 +202,9 @@ esp_err_t jam_ui_init(lv_display_t *display, jam_ui_trigger_cb_t trigger_cb)
     lv_obj_set_style_bg_color(screen, lv_color_hex(0xf7f3e9), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
     lv_obj_add_flag(screen, LV_OBJ_FLAG_CLICKABLE);
-    add_hold_events(screen);
 
     s_image = lv_image_create(screen);
-    lv_obj_add_flag(s_image, LV_OBJ_FLAG_CLICKABLE);
-    add_hold_events(s_image);
+    lv_obj_remove_flag(s_image, LV_OBJ_FLAG_CLICKABLE);
 
     s_level_ring = lv_arc_create(screen);
     lv_obj_set_size(s_level_ring, 452, 452);
@@ -237,6 +231,8 @@ esp_err_t jam_ui_init(lv_display_t *display, jam_ui_trigger_cb_t trigger_cb)
     atomic_store(&s_connected_at_us, 0);
     atomic_store(&s_level_percent, 0);
     s_displayed_level = 0;
+    s_touch_indev = bsp_display_get_input_dev();
+    s_touch_pressed = false;
     s_error_message[0] = '\0';
 
     lv_timer_create(gif_timer_cb, GIF_TIMER_PERIOD_MS, NULL);
