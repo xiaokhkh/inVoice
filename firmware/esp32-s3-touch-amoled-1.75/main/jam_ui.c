@@ -12,6 +12,9 @@
 #define GIF_TIMER_PERIOD_MS 10
 #define UI_TIMER_PERIOD_MS 50
 #define CONNECT_CELEBRATION_US 1200000
+#define MINUTES_PER_DAY 1440U
+#define DAYLIGHT_FALLBACK_COLOR 0xf7f3e9U
+#define DAYLIGHT_FALLBACK_BRIGHTNESS 100U
 
 static const char *TAG = "jam_ui";
 
@@ -24,6 +27,25 @@ typedef enum {
     JAM_STATE_CONNECTED,
 } jam_state_t;
 
+typedef struct {
+    uint16_t minute;
+    uint32_t color;
+    uint8_t brightness;
+} circadian_keyframe_t;
+
+static const circadian_keyframe_t s_circadian_keyframes[] = {
+    {   0, 0x121728,  28 }, // midnight
+    { 300, 0x2b3045,  38 }, // pre-dawn
+    { 360, 0xf4d8b8,  55 }, // warm sunrise
+    { 480, 0xf7f3e9,  82 }, // morning
+    { 720, 0xf8f5ed, 100 }, // noon
+    {1020, 0xf3e7d6,  86 }, // late afternoon
+    {1140, 0xc98e79,  60 }, // sunset
+    {1260, 0x30344b,  42 }, // evening
+    {1380, 0x161b2a,  30 }, // night
+};
+
+static lv_obj_t *s_screen;
 static lv_obj_t *s_image;
 static lv_obj_t *s_level_ring;
 static lv_indev_t *s_touch_indev;
@@ -34,6 +56,8 @@ static jam_state_t s_rendered_state = (jam_state_t)-1;
 static jam_ui_trigger_cb_t s_trigger_cb;
 static uint8_t s_displayed_level;
 static bool s_touch_pressed;
+static bool s_applied_time_valid;
+static uint16_t s_applied_minute = UINT16_MAX;
 
 static atomic_bool s_usb_connected;
 static atomic_bool s_muted;
@@ -42,7 +66,84 @@ static atomic_bool s_error;
 static atomic_int_fast64_t s_last_audio_us;
 static atomic_int_fast64_t s_connected_at_us;
 static atomic_uchar s_level_percent;
+static atomic_bool s_local_time_valid;
+static atomic_uint_fast16_t s_local_minute;
 static char s_error_message[48];
+
+static uint8_t interpolate_channel(uint8_t start, uint8_t end,
+                                   uint16_t elapsed, uint16_t span)
+{
+    const int32_t delta = (int32_t)end - start;
+    return (uint8_t)((int32_t)start +
+                     (delta * elapsed + (delta >= 0 ? span / 2 : -(int32_t)span / 2)) /
+                         span);
+}
+
+static void circadian_style(uint16_t minute, uint32_t *color,
+                            uint8_t *brightness)
+{
+    const size_t count = sizeof(s_circadian_keyframes) /
+                         sizeof(s_circadian_keyframes[0]);
+    for (size_t index = 0; index < count; ++index) {
+        const circadian_keyframe_t *start = &s_circadian_keyframes[index];
+        const circadian_keyframe_t *end =
+            &s_circadian_keyframes[(index + 1U) % count];
+        const uint16_t end_minute = (uint16_t)(
+            end->minute + ((index + 1U == count) ? MINUTES_PER_DAY : 0U));
+        uint16_t adjusted_minute = minute;
+        if (index + 1U == count && adjusted_minute < start->minute) {
+            adjusted_minute = (uint16_t)(adjusted_minute + MINUTES_PER_DAY);
+        }
+        if (adjusted_minute < start->minute || adjusted_minute > end_minute) {
+            continue;
+        }
+
+        const uint16_t elapsed = (uint16_t)(adjusted_minute - start->minute);
+        const uint16_t span = (uint16_t)(end_minute - start->minute);
+        const uint8_t red = interpolate_channel(
+            (uint8_t)(start->color >> 16), (uint8_t)(end->color >> 16),
+            elapsed, span);
+        const uint8_t green = interpolate_channel(
+            (uint8_t)(start->color >> 8), (uint8_t)(end->color >> 8),
+            elapsed, span);
+        const uint8_t blue = interpolate_channel(
+            (uint8_t)start->color, (uint8_t)end->color, elapsed, span);
+        *color = ((uint32_t)red << 16) | ((uint32_t)green << 8) | blue;
+        *brightness = interpolate_channel(
+            start->brightness, end->brightness, elapsed, span);
+        return;
+    }
+
+    *color = DAYLIGHT_FALLBACK_COLOR;
+    *brightness = DAYLIGHT_FALLBACK_BRIGHTNESS;
+}
+
+static void apply_circadian_style(void)
+{
+    const bool valid = atomic_load(&s_local_time_valid);
+    const uint16_t minute = (uint16_t)atomic_load(&s_local_minute);
+    if (valid == s_applied_time_valid && minute == s_applied_minute) {
+        return;
+    }
+
+    uint32_t color = DAYLIGHT_FALLBACK_COLOR;
+    uint8_t brightness = DAYLIGHT_FALLBACK_BRIGHTNESS;
+    if (valid) {
+        circadian_style(minute, &color, &brightness);
+    }
+    lv_obj_set_style_bg_color(s_screen, lv_color_hex(color), 0);
+    lv_obj_set_style_bg_opa(s_screen, LV_OPA_COVER, 0);
+    esp_err_t result = bsp_display_brightness_set(brightness);
+    if (result != ESP_OK) {
+        ESP_LOGW(TAG, "display brightness update failed: %s",
+                 esp_err_to_name(result));
+    }
+    s_applied_time_valid = valid;
+    s_applied_minute = minute;
+    ESP_LOGI(TAG, "circadian display %s minute=%u color=#%06lx brightness=%u%%",
+             valid ? "synced" : "fallback", minute,
+             (unsigned long)color, brightness);
+}
 
 static const char *state_asset(jam_state_t state)
 {
@@ -150,6 +251,8 @@ static void ui_timer_cb(lv_timer_t *timer)
 {
     (void)timer;
 
+    apply_circadian_style();
+
     // Read the pointer device's absolute state instead of relying on an LVGL
     // object's RELEASED/PRESS_LOST event. A target change or redraw during a
     // gesture can otherwise leave the pressed object without a matching
@@ -198,15 +301,15 @@ esp_err_t jam_ui_init(lv_display_t *display, jam_ui_trigger_cb_t trigger_cb)
     s_trigger_cb = trigger_cb;
 
     ESP_RETURN_ON_ERROR(bsp_display_lock(2000), TAG, "display lock failed");
-    lv_obj_t *screen = lv_display_get_screen_active(display);
-    lv_obj_set_style_bg_color(screen, lv_color_hex(0xf7f3e9), 0);
-    lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
-    lv_obj_add_flag(screen, LV_OBJ_FLAG_CLICKABLE);
+    s_screen = lv_display_get_screen_active(display);
+    lv_obj_set_style_bg_color(s_screen, lv_color_hex(DAYLIGHT_FALLBACK_COLOR), 0);
+    lv_obj_set_style_bg_opa(s_screen, LV_OPA_COVER, 0);
+    lv_obj_add_flag(s_screen, LV_OBJ_FLAG_CLICKABLE);
 
-    s_image = lv_image_create(screen);
+    s_image = lv_image_create(s_screen);
     lv_obj_remove_flag(s_image, LV_OBJ_FLAG_CLICKABLE);
 
-    s_level_ring = lv_arc_create(screen);
+    s_level_ring = lv_arc_create(s_screen);
     lv_obj_set_size(s_level_ring, 452, 452);
     lv_obj_center(s_level_ring);
     lv_arc_set_range(s_level_ring, 0, 100);
@@ -230,6 +333,10 @@ esp_err_t jam_ui_init(lv_display_t *display, jam_ui_trigger_cb_t trigger_cb)
     atomic_store(&s_last_audio_us, 0);
     atomic_store(&s_connected_at_us, 0);
     atomic_store(&s_level_percent, 0);
+    atomic_store(&s_local_time_valid, false);
+    atomic_store(&s_local_minute, 0);
+    s_applied_time_valid = true;
+    s_applied_minute = UINT16_MAX;
     s_displayed_level = 0;
     s_touch_indev = bsp_display_get_input_dev();
     s_touch_pressed = false;
@@ -271,6 +378,17 @@ void jam_ui_note_audio(uint8_t level_percent)
 {
     atomic_store(&s_last_audio_us, esp_timer_get_time());
     atomic_store(&s_level_percent, level_percent);
+}
+
+void jam_ui_set_local_time(uint8_t hour, uint8_t minute, bool valid)
+{
+    if (hour > 23 || minute > 59) {
+        valid = false;
+        hour = 0;
+        minute = 0;
+    }
+    atomic_store(&s_local_minute, (uint16_t)(hour * 60U + minute));
+    atomic_store(&s_local_time_valid, valid);
 }
 
 void jam_ui_set_error(const char *message)

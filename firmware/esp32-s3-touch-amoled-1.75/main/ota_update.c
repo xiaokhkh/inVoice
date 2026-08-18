@@ -9,9 +9,11 @@
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "esp_system.h"
+#include "board_clock.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "jam_ui.h"
 #include "voiceops_ota_protocol.h"
 
 static const char *TAG = "usb_ota";
@@ -36,6 +38,9 @@ enum {
     INPUT_DIAGNOSTIC_PWR_RAW,
     INPUT_DIAGNOSTIC_PWR_STABLE,
     INPUT_DIAGNOSTIC_PWR_ARMED,
+    CLOCK_DIAGNOSTIC_VALID,
+    CLOCK_DIAGNOSTIC_HOUR,
+    CLOCK_DIAGNOSTIC_MINUTE,
 };
 
 static void copy_status(voiceops_ota_response_t *destination)
@@ -236,6 +241,41 @@ static void process_request(const voiceops_ota_request_t *request,
         return;
     }
 
+    case VOICEOPS_OTA_COMMAND_SYNC_CLOCK: {
+        if (session->active) {
+            reject_request(request, VOICEOPS_OTA_STATUS_BAD_STATE, session);
+            return;
+        }
+        if (request->payload_length != sizeof(voiceops_clock_payload_t)) {
+            reject_request(request, VOICEOPS_OTA_STATUS_BAD_LENGTH, session);
+            return;
+        }
+
+        voiceops_clock_payload_t clock_payload;
+        memcpy(&clock_payload, request->payload, sizeof(clock_payload));
+        const board_clock_time_t local_time = {
+            .year = (uint16_t)(2000U + clock_payload.year_since_2000),
+            .month = clock_payload.month,
+            .day = clock_payload.day,
+            .weekday = clock_payload.weekday,
+            .hour = clock_payload.hour,
+            .minute = clock_payload.minute,
+            .second = clock_payload.second,
+        };
+        const esp_err_t result = board_clock_set(&local_time);
+        if (result != ESP_OK) {
+            ESP_LOGE(TAG, "Clock sync failed: %s", esp_err_to_name(result));
+            reject_request(request, VOICEOPS_OTA_STATUS_CLOCK_ERROR, session);
+            return;
+        }
+        ota_update_set_clock_diagnostics(
+            true, local_time.hour, local_time.minute);
+        jam_ui_set_local_time(local_time.hour, local_time.minute, true);
+        publish_status(VOICEOPS_OTA_STATE_IDLE, request->command,
+                       VOICEOPS_OTA_STATUS_OK, request->sequence, 0, 0, 0xffU);
+        return;
+    }
+
     case VOICEOPS_OTA_COMMAND_ABORT:
         abort_session(session);
         publish_status(VOICEOPS_OTA_STATE_IDLE, request->command,
@@ -344,6 +384,16 @@ void ota_update_set_input_diagnostics(uint32_t trigger_sources,
     s_status.reserved[INPUT_DIAGNOSTIC_PWR_RAW] = pwr_raw ? 1U : 0U;
     s_status.reserved[INPUT_DIAGNOSTIC_PWR_STABLE] = pwr_stable ? 1U : 0U;
     s_status.reserved[INPUT_DIAGNOSTIC_PWR_ARMED] = pwr_armed ? 1U : 0U;
+    portEXIT_CRITICAL(&s_status_lock);
+}
+
+void ota_update_set_clock_diagnostics(bool valid, uint8_t hour,
+                                      uint8_t minute)
+{
+    portENTER_CRITICAL(&s_status_lock);
+    s_status.reserved[CLOCK_DIAGNOSTIC_VALID] = valid ? 1U : 0U;
+    s_status.reserved[CLOCK_DIAGNOSTIC_HOUR] = hour;
+    s_status.reserved[CLOCK_DIAGNOSTIC_MINUTE] = minute;
     portEXIT_CRITICAL(&s_status_lock);
 }
 

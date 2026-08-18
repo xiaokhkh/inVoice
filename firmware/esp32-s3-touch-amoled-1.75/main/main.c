@@ -1,6 +1,7 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include "audio_input.h"
+#include "board_clock.h"
 #include "bsp/esp-bsp.h"
 #include "driver/gpio.h"
 #include "esp_check.h"
@@ -410,6 +411,24 @@ static void physical_button_task(void *context)
     }
 }
 
+static void clock_task(void *context)
+{
+    (void)context;
+    for (;;) {
+        board_clock_time_t local_time;
+        const esp_err_t result = board_clock_get(&local_time);
+        const bool valid = result == ESP_OK;
+        jam_ui_set_local_time(
+            valid ? local_time.hour : 0, valid ? local_time.minute : 0, valid);
+        ota_update_set_clock_diagnostics(
+            valid, valid ? local_time.hour : 0, valid ? local_time.minute : 0);
+        if (!valid && result != ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(TAG, "RTC read failed: %s", esp_err_to_name(result));
+        }
+        vTaskDelay(pdMS_TO_TICKS(30000));
+    }
+}
+
 void app_main(void)
 {
     atomic_store(&s_ui_ready, false);
@@ -421,6 +440,11 @@ void app_main(void)
     s_trigger_mutex = xSemaphoreCreateMutex();
     ESP_ERROR_CHECK(s_trigger_mutex != NULL ? ESP_OK : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(audio_power_init());
+    const esp_err_t clock_result = board_clock_init();
+    if (clock_result != ESP_OK) {
+        ESP_LOGW(TAG, "RTC unavailable; display uses daylight fallback: %s",
+                 esp_err_to_name(clock_result));
+    }
     ESP_ERROR_CHECK(ota_update_init());
 
     lv_display_t *display = bsp_display_start();
@@ -459,5 +483,9 @@ void app_main(void)
     }
 
     xTaskCreate(physical_button_task, "physical_buttons", 3072, NULL, 4, NULL);
+    if (clock_result == ESP_OK &&
+        xTaskCreate(clock_task, "board_clock", 3072, NULL, 3, NULL) != pdPASS) {
+        ESP_LOGW(TAG, "Unable to start display clock task");
+    }
     ESP_LOGI(TAG, "MLX Voice Mic ready: hold touch/PWR to talk; tap touch for Return; press BOOT for clipboard");
 }

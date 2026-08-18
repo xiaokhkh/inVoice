@@ -102,7 +102,7 @@ ESP32-S3-Touch-AMOLED-1.75**, standard model **SKU 31261**. This is the original
 | Touch | `CST9217` over I2C | Hold-to-talk and short-tap Return |
 | Audio ADC | `ES7210`, dual onboard microphones | 24 kHz mono, 16-bit USB microphone stream |
 | Power / I/O | `AXP2101` + `TCA9554` | PWR input, power control, and GPIO expansion |
-| Sensors | `QMI8658` IMU + `PCF85063` RTC | Present on the board; not required by inVoice |
+| Sensors | `QMI8658` IMU + `PCF85063` RTC | RTC keeps local time for the circadian display; IMU is unused |
 
 Waveshare also lists the `-B` enclosure version as SKU `31262` and the `-G` GPS
 version as SKU `31264`. They are official variants, but this project currently
@@ -122,6 +122,9 @@ and the [ESP32-S3 datasheet](https://www.espressif.com/sites/default/files/docum
   This works without app-specific host translation or Accessibility permission.
 - While held, the preserved Jam character switches to its thinking state and a
   speech-sensitive green ring runs around the full display.
+- Behind the transparent Jam animation, the background and AMOLED brightness
+  move smoothly from a warm dawn through bright daylight to a dark-blue night.
+  The onboard RTC keeps this local-time rhythm while the board is disconnected.
 - Press BOOT during normal operation to send F14 and toggle clipboard history.
 - The board enumerates as `MLX Voice Mic`: USB Audio + keyboard HID + an
   independent vendor HID updater, VID/PID `0x303A:0x4002`.

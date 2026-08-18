@@ -3,6 +3,7 @@ idf_component_register(
         "main.c"
         "audio_input.c"
         "asset_store.c"
+        "board_clock.c"
         "jam_ui.c"
         "ota_update.c"
         "gif/gifdec.c"

@@ -15,6 +15,8 @@ void ota_update_set_input_diagnostics(uint32_t trigger_sources,
                                       bool touch_raw, bool touch_stable,
                                       bool pwr_raw, bool pwr_stable,
                                       bool pwr_armed);
+void ota_update_set_clock_diagnostics(bool valid, uint8_t hour,
+                                      uint8_t minute);
 
 uint16_t ota_update_get_report(uint8_t report_id, uint8_t report_type,
                                uint8_t *buffer, uint16_t requested_length,

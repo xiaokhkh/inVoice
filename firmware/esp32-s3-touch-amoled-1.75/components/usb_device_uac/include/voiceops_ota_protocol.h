@@ -29,6 +29,7 @@ typedef enum {
     VOICEOPS_OTA_COMMAND_FINISH = 3,
     VOICEOPS_OTA_COMMAND_ABORT = 4,
     VOICEOPS_OTA_COMMAND_REBOOT = 5,
+    VOICEOPS_OTA_COMMAND_SYNC_CLOCK = 6,
 } voiceops_ota_command_t;
 
 typedef enum {
@@ -52,9 +53,20 @@ typedef enum {
     VOICEOPS_OTA_STATUS_CRC_MISMATCH = 10,
     VOICEOPS_OTA_STATUS_INVALID_IMAGE = 11,
     VOICEOPS_OTA_STATUS_QUEUE_FULL = 12,
+    VOICEOPS_OTA_STATUS_CLOCK_ERROR = 13,
 } voiceops_ota_status_t;
 
 #pragma pack(push, 1)
+typedef struct {
+    uint8_t year_since_2000;
+    uint8_t month;
+    uint8_t day;
+    uint8_t weekday;
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+} voiceops_clock_payload_t;
+
 typedef struct {
     uint32_t magic;
     uint8_t version;
@@ -87,6 +99,8 @@ _Static_assert(sizeof(voiceops_ota_request_t) == VOICEOPS_OTA_REPORT_SIZE,
                "OTA request must be one HID feature report");
 _Static_assert(sizeof(voiceops_ota_response_t) == VOICEOPS_OTA_REPORT_SIZE,
                "OTA response must be one HID feature report");
+_Static_assert(sizeof(voiceops_clock_payload_t) == 7,
+               "Clock payload wire size changed");
 
 static inline uint32_t voiceops_ota_crc32_update(uint32_t crc,
                                                  const uint8_t *data,

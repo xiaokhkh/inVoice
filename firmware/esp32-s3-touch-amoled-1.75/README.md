@@ -14,7 +14,7 @@ uses the preserved 384×384 Jam animations as the interaction UI.
 | Touch | `CST9217` I2C controller |
 | Audio | Dual onboard microphones through `ES7210` |
 | Power and I/O | `AXP2101` PMIC and `TCA9554` I/O expander |
-| Other onboard devices | `QMI8658` IMU and `PCF85063` RTC; unused by this firmware |
+| Other onboard devices | `PCF85063` RTC drives the circadian display; `QMI8658` IMU is unused |
 
 Waveshare identifies the enclosure variant as SKU `31262` (`-B`) and the GPS
 variant as SKU `31264` (`-G`). This project regression-tests only the standard
@@ -43,6 +43,13 @@ Opening the microphone from the host or detecting speech cannot show the ring
 or activate dictation by itself.
 The firmware disables the AXP2101 PWR-key long-press shutdown action so a long
 dictation cannot accidentally power the board off.
+
+The transparent Jam animation sits over a time-aware background. Color and
+AMOLED brightness interpolate continuously between midnight navy (28%), warm
+dawn, bright daytime ivory (up to 100%), sunset rose, and evening blue. The
+board reads local time from its `PCF85063` RTC every 30 seconds, so the look
+continues without a host connection. Until the RTC has a valid time, the UI
+uses the original daylight background at 100% brightness.
 
 USB is exposed as a composite device: **MLX Voice Mic** (24 kHz, mono, 16-bit
 PCM), a keyboard HID interface, and an independent vendor HID firmware-update
@@ -113,6 +120,13 @@ The host validates the ESP image and CRC, writes the inactive OTA slot, asks the
 board to validate and atomically select it, and restarts the microphone. No
 BOOT/Fn/PWR/screen press is needed. BOOT continues to open the clipboard panel
 during normal operation; it is not an OTA trigger.
+
+After the board reconnects, the updater also synchronizes the RTC to the Mac's
+local date and time. To resynchronize without installing firmware, run:
+
+```bash
+tools/voiceops-ota/build/voiceops-ota sync-time
+```
 
 Protocol and recovery details are in
 [`docs/ESP32_USB_OTA_PROTOCOL.md`](../../docs/ESP32_USB_OTA_PROTOCOL.md).

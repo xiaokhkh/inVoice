@@ -60,6 +60,11 @@ REBOOT
 bootloader rollback option is enabled; a newly selected image is marked valid
 only after display, microphone, USB audio, and OTA initialization succeed.
 
+`SYNC_CLOCK` carries the Mac's local year, month, day, weekday, hour, minute,
+and second in a seven-byte payload. It updates the board's `PCF85063` RTC and is
+independent of an OTA transaction. The updater sends it automatically after a
+successful restart; it is also safe to invoke by itself.
+
 ## Host commands
 
 From the repository root:
@@ -67,12 +72,14 @@ From the repository root:
 ```bash
 make -C tools/voiceops-ota test
 tools/voiceops-ota/build/voiceops-ota status
+tools/voiceops-ota/build/voiceops-ota sync-time
 ./scripts/update_esp32_firmware.sh
 ```
 
 `status` also prints the live trigger-source mask and raw/debounced touch and
-PWR states. These diagnostics occupy reserved response bytes, so the 64-byte
-wire format and protocol version remain compatible with older host tools.
+PWR states, plus RTC synchronization and local hour/minute. These diagnostics
+occupy reserved response bytes, so the 64-byte wire format and protocol version
+remain compatible with older host tools.
 
 The script defaults to
 `firmware/esp32-s3-touch-amoled-1.75/build/mlx_voice_mic.bin`. It validates the

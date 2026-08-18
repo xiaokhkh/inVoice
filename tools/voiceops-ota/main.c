@@ -47,6 +47,7 @@ static const char *status_name(uint32_t status)
     case VOICEOPS_OTA_STATUS_CRC_MISMATCH: return "CRC mismatch";
     case VOICEOPS_OTA_STATUS_INVALID_IMAGE: return "invalid ESP image";
     case VOICEOPS_OTA_STATUS_QUEUE_FULL: return "device request queue full";
+    case VOICEOPS_OTA_STATUS_CLOCK_ERROR: return "RTC update failed";
     }
     return "unknown device error";
 }
@@ -93,13 +94,15 @@ static bool device_property_int(IOHIDDeviceRef device, CFStringRef key,
            CFNumberGetValue((CFNumberRef)property, kCFNumberIntType, value);
 }
 
-static bool open_connection(ota_connection_t *connection)
+static bool open_connection(ota_connection_t *connection, bool report_errors)
 {
     memset(connection, 0, sizeof(*connection));
     connection->manager = IOHIDManagerCreate(kCFAllocatorDefault,
                                               kIOHIDOptionsTypeNone);
     if (connection->manager == NULL) {
-        fprintf(stderr, "Unable to create the macOS HID manager.\n");
+        if (report_errors) {
+            fprintf(stderr, "Unable to create the macOS HID manager.\n");
+        }
         return false;
     }
 
@@ -114,8 +117,10 @@ static bool open_connection(ota_connection_t *connection)
     IOReturn result = IOHIDManagerOpen(connection->manager,
                                        kIOHIDOptionsTypeNone);
     if (result != kIOReturnSuccess) {
-        fprintf(stderr, "Unable to open the macOS HID manager (0x%08x).\n",
-                result);
+        if (report_errors) {
+            fprintf(stderr, "Unable to open the macOS HID manager (0x%08x).\n",
+                    result);
+        }
         CFRelease(connection->manager);
         connection->manager = NULL;
         return false;
@@ -148,10 +153,12 @@ static bool open_connection(ota_connection_t *connection)
     }
 
     if (connection->device == NULL) {
-        fprintf(stderr,
-                "MLX Voice Mic USB OTA interface was not found.\n"
-                "The OTA-capable firmware must be installed once through the "
-                "ESP32-S3 ROM downloader; no extra wiring or Wi-Fi is used.\n");
+        if (report_errors) {
+            fprintf(stderr,
+                    "MLX Voice Mic USB OTA interface was not found.\n"
+                    "The OTA-capable firmware must be installed once through the "
+                    "ESP32-S3 ROM downloader; no extra wiring or Wi-Fi is used.\n");
+        }
         IOHIDManagerClose(connection->manager, kIOHIDOptionsTypeNone);
         CFRelease(connection->manager);
         connection->manager = NULL;
@@ -160,8 +167,10 @@ static bool open_connection(ota_connection_t *connection)
 
     result = IOHIDDeviceOpen(connection->device, kIOHIDOptionsTypeNone);
     if (result != kIOReturnSuccess) {
-        fprintf(stderr, "Unable to open the firmware update interface "
-                        "(0x%08x).\n", result);
+        if (report_errors) {
+            fprintf(stderr, "Unable to open the firmware update interface "
+                            "(0x%08x).\n", result);
+        }
         CFRelease(connection->device);
         connection->device = NULL;
         IOHIDManagerClose(connection->manager, kIOHIDOptionsTypeNone);
@@ -284,6 +293,44 @@ static bool load_image(const char *path, uint8_t **bytes, uint32_t *size,
     return true;
 }
 
+static bool send_local_time(IOHIDDeviceRef device)
+{
+    const time_t now = time(NULL);
+    struct tm local_time;
+    if (now == (time_t)-1 || localtime_r(&now, &local_time) == NULL ||
+        local_time.tm_year < 100 || local_time.tm_year > 199) {
+        fprintf(stderr, "The Mac local time is outside the RTC range 2000-2099.\n");
+        return false;
+    }
+
+    const voiceops_clock_payload_t payload = {
+        .year_since_2000 = (uint8_t)(local_time.tm_year - 100),
+        .month = (uint8_t)(local_time.tm_mon + 1),
+        .day = (uint8_t)local_time.tm_mday,
+        .weekday = (uint8_t)local_time.tm_wday,
+        .hour = (uint8_t)local_time.tm_hour,
+        .minute = (uint8_t)local_time.tm_min,
+        .second = (uint8_t)local_time.tm_sec,
+    };
+    voiceops_ota_request_t request = {
+        .magic = VOICEOPS_OTA_MAGIC,
+        .version = VOICEOPS_OTA_PROTOCOL_VERSION,
+        .command = VOICEOPS_OTA_COMMAND_SYNC_CLOCK,
+        .payload_length = sizeof(payload),
+        .sequence = 1,
+    };
+    memcpy(request.payload, &payload, sizeof(payload));
+    voiceops_ota_response_t response;
+    if (!send_and_wait(device, &request, 3000, &response)) {
+        return false;
+    }
+    printf("RTC synchronized to Mac local time: %04d-%02d-%02d %02d:%02d:%02d.\n",
+           local_time.tm_year + 1900, local_time.tm_mon + 1,
+           local_time.tm_mday, local_time.tm_hour, local_time.tm_min,
+           local_time.tm_sec);
+    return true;
+}
+
 static void print_response(const voiceops_ota_response_t *response)
 {
     char version[sizeof(response->running_version) + 1];
@@ -303,12 +350,18 @@ static void print_response(const voiceops_ota_response_t *response)
            response->reserved[0], response->reserved[1],
            response->reserved[2], response->reserved[3],
            response->reserved[4], response->reserved[5]);
+    if (response->reserved[6] != 0) {
+        printf("clock: %02u:%02u local\n", response->reserved[7],
+               response->reserved[8]);
+    } else {
+        printf("clock: unsynchronized\n");
+    }
 }
 
 static int run_status(void)
 {
     ota_connection_t connection;
-    if (!open_connection(&connection)) {
+    if (!open_connection(&connection, true)) {
         return 1;
     }
     voiceops_ota_response_t response;
@@ -318,6 +371,17 @@ static int run_status(void)
     } else {
         fprintf(stderr, "The device returned an invalid OTA status report.\n");
     }
+    close_connection(&connection);
+    return success ? 0 : 1;
+}
+
+static int run_sync_time(void)
+{
+    ota_connection_t connection;
+    if (!open_connection(&connection, true)) {
+        return 1;
+    }
+    const bool success = send_local_time(connection.device);
     close_connection(&connection);
     return success ? 0 : 1;
 }
@@ -334,7 +398,7 @@ static int run_update(const char *path)
            path, image_size, image_crc);
 
     ota_connection_t connection;
-    if (!open_connection(&connection)) {
+    if (!open_connection(&connection, true)) {
         free(image);
         return 1;
     }
@@ -427,6 +491,23 @@ static int run_update(const char *path)
 
     close_connection(&connection);
     free(image);
+
+    if (success) {
+        bool clock_synced = false;
+        for (unsigned attempt = 0; attempt < 20 && !clock_synced; ++attempt) {
+            sleep_milliseconds(500);
+            ota_connection_t restarted;
+            if (open_connection(&restarted, false)) {
+                clock_synced = send_local_time(restarted.device);
+                close_connection(&restarted);
+            }
+        }
+        if (!clock_synced) {
+            fprintf(stderr, "Firmware update succeeded, but automatic RTC sync "
+                            "did not complete. Run `voiceops-ota sync-time` "
+                            "after the board reconnects.\n");
+        }
+    }
     return success ? 0 : 1;
 }
 
@@ -468,16 +549,20 @@ static void print_usage(const char *program)
     fprintf(stderr,
             "Usage:\n"
             "  %s status\n"
+            "  %s sync-time\n"
             "  %s update PATH_TO_MLX_VOICE_MIC.BIN\n"
             "  %s verify PATH_TO_MLX_VOICE_MIC.BIN\n"
             "  %s self-test\n",
-            program, program, program, program);
+            program, program, program, program, program);
 }
 
 int main(int argc, char **argv)
 {
     if (argc == 2 && strcmp(argv[1], "status") == 0) {
         return run_status();
+    }
+    if (argc == 2 && strcmp(argv[1], "sync-time") == 0) {
+        return run_sync_time();
     }
     if (argc == 3 && strcmp(argv[1], "update") == 0) {
         return run_update(argv[2]);
