@@ -92,6 +92,17 @@ VID/PID 的 HID 报告，因此扩展坞或其他键盘不会制造第二份录�
 暂停后显示可直接恢复的提示。删除和清理支持撤销；`⌘F` 聚焦搜索，`⇧⌘C` 复制所选记录，
 `⌘Fn` 打开快捷面板，在原应用中快速粘贴。
 
+### 剪贴板性能（0.3.1）
+
+普通历史按 **最近使用（LRU）** 保留 200 条，固定记录额外保留。成功复制或粘贴会延长
+保留时间，列表仍按收集时间排列；浏览预览和失败操作不计为使用。
+
+PNG 直接保留原有编码数据；图片转换、哈希、RTF 解析和历史图片读盘在后台完成。
+采集同时只处理一个快照，完成后立即检查最新复制内容。快捷面板隐藏时暂停查询，
+再次打开时刷新。读取图片期间若剪贴板发生变化或操作取消，会保留更新的剪贴板内容。
+
+本版采用 Swift 与系统原生库，详见[性能实测与 Rust 评估](docs/CLIPBOARD_PERFORMANCE_2026-09-26.md)。
+
 ## 支持的收音器硬件
 
 ![使用可选 ESP32-S3 Touch AMOLED 作为 inVoice 按住说话麦克风](docs/assets/voiceops-hardware-use-case.png)
@@ -289,7 +300,7 @@ idf.py -p /dev/cu.usbmodemXXXX flash
 | 流式 ASR | sherpa-onnx 中英双语 Zipformer | `models/zipformer/` |
 | 最终 ASR | `mlx-community/GLM-ASR-Nano-2512-8bit` | Hugging Face 缓存 |
 | 文本处理 | `qwen3.6:35b-a3b-coding` | Ollama 模型目录 |
-| 剪贴板历史 | 最近最多 200 项 | `~/Library/Application Support/mlx-voiceops/` |
+| 剪贴板历史 | 最近使用的 200 条普通记录，外加固定记录及上一次撤销批次 | `~/Library/Application Support/mlx-voiceops/` |
 | 运行日志 | Sidecar 标准输出与错误 | `~/Library/Logs/VoiceOps/` |
 
 首次配置完成后，语音识别和 LLM 处理都通过只监听本机回环地址的服务完成。

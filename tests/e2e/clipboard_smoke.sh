@@ -15,5 +15,10 @@ swiftc -parse-as-library -O -o "$qa_bin_dir/delivery" \
 "$qa_bin_dir/delivery"
 swiftc -parse-as-library -O -o "$qa_bin_dir/experience" \
   tests/e2e/clipboard_experience_smoke.swift "${common_sources[@]}" \
-  apps/macos/VoiceOps/Clipboard/{ClipboardStore,ClipboardItem,ClipboardHistoryViewModel}.swift
+  apps/macos/VoiceOps/Clipboard/{ClipboardStore,ClipboardItem,ClipboardImageProcessor,ClipboardHistoryViewModel}.swift
 "$qa_bin_dir/experience"
+swiftc -parse-as-library -O -o "$qa_bin_dir/capture" \
+  tests/e2e/clipboard_capture_smoke.swift \
+  apps/macos/VoiceOps/Clipboard/{ClipboardObserver,ClipboardStore,ClipboardItem,ClipboardImageProcessor}.swift \
+  apps/macos/VoiceOpsCore/{ProductExperience,SessionMetricV1,DictationPolicy}.swift
+"$qa_bin_dir/capture"

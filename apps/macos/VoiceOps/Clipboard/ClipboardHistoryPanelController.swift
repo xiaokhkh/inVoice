@@ -12,17 +12,19 @@ final class ClipboardHistoryPanelController {
     private var previewTask: Task<Void, Never>?
     private var previewedItemID: UUID?
     private var targetPID: pid_t?
+    private var pasteTask: Task<Void, Never>?
 
     init(store: ClipboardStore = .shared) {
-        viewModel = ClipboardHistoryViewModel(store: store)
+        viewModel = ClipboardHistoryViewModel(store: store, isActive: false)
         createPanel()
     }
 
     func toggle() { panel?.isVisible == true ? hide() : show() }
 
     func show() {
+        pasteTask?.cancel()
         targetPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        viewModel.refresh(resetSelection: true)
+        viewModel.setActive(true)
         panel?.show()
         hidePreview()
         startKeyMonitor()
@@ -32,16 +34,19 @@ final class ClipboardHistoryPanelController {
         panel?.hide()
         stopKeyMonitor()
         hidePreview()
-        if resetSearch { viewModel.clearQuery() }
+        viewModel.setActive(false)
+        if resetSearch { pasteTask?.cancel(); viewModel.clearQuery() }
     }
 
     private func paste(_ item: ClipboardItem) {
-        guard !viewModel.isSearching else { viewModel.showMessage("正在搜索，请稍候"); return }
+        guard !viewModel.isSearching, !viewModel.isTransferring else { viewModel.showMessage("正在搜索，请稍候"); return }
         let destination = targetPID
         hide(resetSearch: false)
-        Task {
+        pasteTask = Task {
             let pasted = await viewModel.pasteItem(item, targetPID: destination)
+            guard !Task.isCancelled else { return }
             if !pasted {
+                viewModel.setActive(true)
                 panel?.show()
                 startKeyMonitor()
             } else { viewModel.clearQuery() }

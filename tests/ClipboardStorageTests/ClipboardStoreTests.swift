@@ -174,11 +174,66 @@ final class ClipboardStoreTests: XCTestCase {
         record("legacy")
         _ = store.counts()
         store = nil
+        try sql("DROP INDEX idx_clipboard_recent_active; DROP INDEX idx_clipboard_identity_active; DROP INDEX idx_clipboard_lru_active;")
         try sql("ALTER TABLE clipboard_items DROP COLUMN deleted_at;")
         store = ClipboardStore(directory: directory)
         let item = try XCTUnwrap(store.getRecentItems().first)
         XCTAssertEqual(item.contentText, "legacy")
         XCTAssertEqual(store.deleteItems(ids: [item.id]), 1)
         XCTAssertEqual(store.undoDeletion(), 1)
+    }
+
+    func testSuccessfulUseProtectsOldClipWithoutReorderingHistory() throws {
+        record("frequently reused")
+        let original = try XCTUnwrap(store.getRecentItems().first)
+        for n in 0..<199 { record("newer \(n)") }
+        let before = store.getRecentItems().map(\.id)
+        store.markUsed(original.id)
+        XCTAssertEqual(store.getRecentItems().map(\.id), before)
+        let used = try XCTUnwrap(store.getRecentItems().last)
+        XCTAssertEqual(used.timestamp, original.timestamp)
+        XCTAssertGreaterThan(used.lastUsedAt, original.lastUsedAt)
+        record("overflow")
+        let remaining = store.getRecentItems()
+        XCTAssertEqual(remaining.count, 200)
+        XCTAssertTrue(remaining.contains { $0.id == original.id })
+        XCTAssertFalse(remaining.contains { $0.contentText == "newer 0" })
+    }
+
+    func testPreviewDoesNotExtendRetentionAndUsageSurvivesRelaunch() throws {
+        record("preview only")
+        let preview = try XCTUnwrap(store.getRecentItems().first)
+        record("used")
+        let used = try XCTUnwrap(store.getRecentItems().first)
+        for n in 0..<198 { record("later \(n)") }
+        _ = store.getRecentItems(query: "preview only")
+        store.markUsed(used.id)
+        let usage = try XCTUnwrap(store.getRecentItems().first { $0.id == used.id }).lastUsedAt
+        store = nil
+        store = ClipboardStore(directory: directory)
+        XCTAssertEqual(store.getRecentItems().first { $0.id == used.id }?.lastUsedAt, usage)
+        record("new capture")
+        XCTAssertFalse(store.getRecentItems().contains { $0.id == preview.id })
+        XCTAssertTrue(store.getRecentItems().contains { $0.id == used.id })
+    }
+
+    func testLRUMigrationInitializesUsageWithoutChangingDatesOrUndo() throws {
+        record("old record")
+        let original = try XCTUnwrap(store.getRecentItems().first)
+        record("undo me")
+        let deleted = try XCTUnwrap(store.getRecentItems().first)
+        XCTAssertEqual(store.deleteItems(ids: [deleted.id]), 1)
+        store = nil
+        try sql("DROP INDEX idx_clipboard_usage; DROP INDEX idx_clipboard_lru_active; ALTER TABLE clipboard_items DROP COLUMN last_used_at;")
+        store = ClipboardStore(directory: directory)
+        let restored = try XCTUnwrap(store.getRecentItems().first)
+        XCTAssertEqual(restored.timestamp, original.timestamp)
+        XCTAssertEqual(restored.lastUsedAt, original.timestamp)
+        XCTAssertEqual(store.counts().undoable, 1)
+        store.markUsed(deleted.id) // A stale UI action must not revive a deleted record.
+        XCTAssertEqual(store.counts().total, 1)
+        XCTAssertEqual(store.undoDeletion(), 1)
+        let undone = try XCTUnwrap(store.getRecentItems().first { $0.id == deleted.id })
+        XCTAssertGreaterThan(undone.lastUsedAt, deleted.lastUsedAt)
     }
 }

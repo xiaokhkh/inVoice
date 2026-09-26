@@ -91,7 +91,7 @@ Open **Clipboard (剪贴板)** in the main window for full text and image previe
 `Command + Fn` to search and paste into the app you were using.
 
 - Filter by all clips, pinned clips, text, images, or voice input. Search text and image filenames, including Chinese and literal punctuation.
-- Pin frequently used clips. The latest 200 ordinary clips are kept, with pinned clips retained separately.
+- Pin frequently used clips. The 200 most recently used ordinary clips are kept, with pinned clips retained separately. Successful copy/paste extends retention without changing the visible capture-time order; previews and failed operations do not count as use.
 - Delete individual clips or use **More (更多) → Clear unpinned**. The last deletion/cleanup batch can be undone, including after relaunch, until another deletion replaces it.
 - The quick panel supports native text editing and input methods: `↑/↓` selects, `Return` pastes, `Esc` closes, and `Command + Delete` deletes. `Command + C` copies selected search text when there is a selection, otherwise it copies the selected clip.
 - In the main window, `Command + F` focuses search and `Shift + Command + C` copies the full selected clip. Pause capture in the Clipboard page's **More** menu; a visible banner lets you resume it.
@@ -108,6 +108,16 @@ Closing and reopening it preserves the conversation and draft during the current
 **New conversation** clears them explicitly. Selected-text translation starts a new conversation.
 Send with `Command + Return`; Escape closes only the active assistant panel.
 Streamed token bursts are coalesced into at most 25 text updates per second.
+
+### Clipboard performance (0.3.1)
+
+PNG capture preserves the existing encoded bytes. Image conversion, hashing, RTF parsing,
+and history-image reads run in the background. Capture permits one in-flight snapshot;
+after it finishes, the latest clipboard change is checked immediately. Hidden quick panels
+stop querying the database until reopened. Async image copy/paste respects newer clipboard
+contents and cancellation. LRU metadata migrates existing history without changing dates or pins.
+
+See [benchmarks and the Rust assessment](docs/CLIPBOARD_PERFORMANCE_2026-09-26.md).
 
 
 ## Supported microphone hardware
@@ -320,7 +330,7 @@ Runtime logs are stored in `~/Library/Logs/VoiceOps/`.
 | Streaming ASR | sherpa-onnx bilingual Zipformer | `models/zipformer/` |
 | Final ASR | `mlx-community/GLM-ASR-Nano-2512-8bit` | Hugging Face cache |
 | Text processing | `qwen3.6:35b-a3b-coding` | Ollama model store |
-| Clipboard history | Up to 200 recent items | `~/Library/Application Support/mlx-voiceops/` |
+| Clipboard history | 200 recently used ordinary clips, plus pinned clips and the last undo batch | `~/Library/Application Support/mlx-voiceops/` |
 | Runtime logs | Sidecar stdout and stderr | `~/Library/Logs/VoiceOps/` |
 
 After setup, transcription and LLM processing use loopback-only local services.

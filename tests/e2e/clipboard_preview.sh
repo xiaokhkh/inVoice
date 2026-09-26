@@ -10,6 +10,6 @@ swiftc -target "$(uname -m)-apple-macos13.0" -parse-as-library -O -o "$qa_bundle
   tests/e2e/clipboard_preview.swift tests/e2e/clipboard_test_support.swift \
   apps/macos/VoiceOpsCore/*.swift \
   apps/macos/VoiceOps/Services/{FocusInjector,Permissions}.swift \
-  apps/macos/VoiceOps/Clipboard/{ClipboardItem,ClipboardStore,ClipboardHistoryViewModel,ClipboardItemRowView,HistoryWorkspaceView,ClipboardHistoryPanel,ClipboardHistoryPanelController,ClipboardHistoryView}.swift
+  apps/macos/VoiceOps/Clipboard/{ClipboardItem,ClipboardStore,ClipboardImageProcessor,ClipboardHistoryViewModel,ClipboardItemRowView,HistoryWorkspaceView,ClipboardHistoryPanel,ClipboardHistoryPanelController,ClipboardHistoryView}.swift
 codesign --force --sign - "$qa_bundle"
 printf '%s\n' "$qa_bundle"

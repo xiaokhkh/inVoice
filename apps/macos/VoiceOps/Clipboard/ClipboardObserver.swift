@@ -1,20 +1,27 @@
 import AppKit
 import Foundation
-import ImageIO
 import UniformTypeIdentifiers
 
+@MainActor
 final class ClipboardObserver {
     static let shared = ClipboardObserver(store: ClipboardStore.shared)
 
     private let store: ClipboardStore
-    private let pasteboard = NSPasteboard.general
+    private let pasteboard: NSPasteboard
+    private let captureEnabled: () -> Bool
     private var lastChangeCount: Int
     private var timer: Timer?
     private var ignoreUntil: Date?
     private var defaultsObserver: Any?
+    private var captureTask: Task<Void, Never>?
 
-    init(store: ClipboardStore) {
+    init(store: ClipboardStore, pasteboard: NSPasteboard = .general,
+         captureEnabled: @escaping () -> Bool = {
+             UserDefaults.standard.object(forKey: ClipboardCapturePolicy.enabledKey) as? Bool ?? true
+         }) {
         self.store = store
+        self.pasteboard = pasteboard
+        self.captureEnabled = captureEnabled
         self.lastChangeCount = pasteboard.changeCount
     }
 
@@ -22,22 +29,24 @@ final class ClipboardObserver {
         if defaultsObserver == nil {
             defaultsObserver = NotificationCenter.default.addObserver(
                 forName: UserDefaults.didChangeNotification, object: nil, queue: .main
-            ) { [weak self] _ in self?.updateCaptureTimer() }
+            ) { [weak self] _ in
+                Task { @MainActor in self?.updateCaptureTimer() }
+            }
         }
         updateCaptureTimer()
     }
 
     private func updateCaptureTimer() {
-        let enabled = UserDefaults.standard.object(forKey: ClipboardCapturePolicy.enabledKey) as? Bool ?? true
-        if !enabled {
+        if !captureEnabled() {
             timer?.invalidate()
             timer = nil
+            captureTask?.cancel()
             return
         }
         guard timer == nil else { return }
         lastChangeCount = pasteboard.changeCount
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            self?.poll()
+            Task { @MainActor in self?.poll() }
         }
         timer?.tolerance = 0.15
     }
@@ -45,6 +54,7 @@ final class ClipboardObserver {
     func stop() {
         timer?.invalidate()
         timer = nil
+        captureTask?.cancel()
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
         defaultsObserver = nil
     }
@@ -53,137 +63,79 @@ final class ClipboardObserver {
         ignoreUntil = Date().addingTimeInterval(duration)
     }
 
-    private func poll() {
+    // Only one image snapshot can be in flight, including hashing and disk writes. If copying
+    // outruns conversion, the next poll reads the latest pasteboard, without a queue of huge bitmaps.
+    func poll() {
+        guard timer != nil, captureTask == nil else { return }
         let changeCount = pasteboard.changeCount
         guard changeCount != lastChangeCount else { return }
         lastChangeCount = changeCount
-
-        if let ignoreUntil, ignoreUntil > Date() {
-            return
-        }
-
+        if let ignoreUntil, ignoreUntil > Date() { return }
         let types = Set((pasteboard.types ?? []).map(\.rawValue))
-        let enabled = UserDefaults.standard.object(forKey: ClipboardCapturePolicy.enabledKey) as? Bool ?? true
-        guard ClipboardCapturePolicy.shouldCapture(types: types, enabled: enabled) else { return }
-
+        guard ClipboardCapturePolicy.shouldCapture(types: types, enabled: captureEnabled()) else { return }
         let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-
-        if let result = readImageData() {
-            store.recordSystemImage(result.data, appBundleID: bundleID, originalPath: result.originalPath)
-            return
-        }
-
-        if let text = readText() {
-            store.recordSystemText(text, appBundleID: bundleID)
-        }
-    }
-
-    private func readText() -> String? {
-        if let text = pasteboard.string(forType: .string) {
-            return text
-        }
-        if let rtfData = pasteboard.data(forType: .rtf) {
-            if let attr = try? NSAttributedString(data: rtfData, options: [:], documentAttributes: nil) {
-                return attr.string
+        let snapshot = readSnapshot()
+        // A lazy pasteboard provider can change ownership during materialization.
+        guard pasteboard.changeCount == changeCount else { return }
+        let store = self.store
+        captureTask = Task { [weak self] in
+            let prepared = await Task.detached(priority: .utility) { Self.prepare(snapshot) }.value
+            if !Task.isCancelled, self?.captureEnabled() == true {
+                await Task.detached(priority: .utility) {
+                    switch prepared {
+                    case .image(let data, let path): store.recordSystemImage(data, appBundleID: bundleID, originalPath: path)
+                    case .text(let text): store.recordSystemText(text, appBundleID: bundleID)
+                    case nil: break
+                    }
+                    store.waitForPendingWrites()
+                }.value
             }
+            self?.captureTask = nil
+            // Catch the most recent copy immediately after a slow conversion completes.
+            self?.poll()
         }
-        return nil
     }
 
-    private func readImageData() -> (data: Data, originalPath: String?)? {
-        if let data = dataForImageTypes(),
-           let png = pngData(from: data) {
-            return (png, nil)
-        }
-
-        if let fileURL = fileURLFromPasteboard(),
-           let png = pngData(from: fileURL) {
-            return (png, fileURL.path)
-        }
-
-        if let image = NSImage(pasteboard: pasteboard),
-           let data = pngData(from: image) {
-            return (data, nil)
-        }
-
-        return nil
+    private struct Snapshot: Sendable {
+        var image: ClipboardImageProcessor.Input?
+        var originalPath: String?
+        var text: String?
+        var rtf: Data?
+    }
+    private enum Prepared: Sendable {
+        case image(Data, String?)
+        case text(String)
     }
 
-    private func dataForImageTypes() -> Data? {
-        let types = [
-            UTType.png.identifier,
-            UTType.tiff.identifier,
-            "public.webp",
-            UTType.jpeg.identifier,
-            UTType.heic.identifier,
-            UTType.heif.identifier,
-            UTType.gif.identifier,
-            UTType.bmp.identifier
-        ]
-        for type in types {
-            if let data = pasteboard.data(forType: NSPasteboard.PasteboardType(type)) {
-                return data
+    private func readSnapshot() -> Snapshot {
+        var snapshot = Snapshot()
+        let imageTypes = [UTType.png.identifier, UTType.tiff.identifier, "public.webp", UTType.jpeg.identifier,
+                          UTType.heic.identifier, UTType.heif.identifier, UTType.gif.identifier, UTType.bmp.identifier]
+            + NSImage.imageTypes
+        if let type = pasteboard.availableType(from: imageTypes.map { NSPasteboard.PasteboardType($0) }),
+           let data = pasteboard.data(forType: type) {
+            snapshot.image = .data(data)
+        } else if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+                  let url = urls.first {
+            snapshot.image = .file(url)
+            snapshot.originalPath = url.path
+        }
+        snapshot.text = pasteboard.string(forType: .string)
+        if snapshot.text == nil { snapshot.rtf = pasteboard.data(forType: .rtf) }
+        return snapshot
+    }
+
+    private nonisolated static func prepare(_ snapshot: Snapshot) -> Prepared? {
+        autoreleasepool {
+            if let input = snapshot.image, let data = ClipboardImageProcessor.pngData(from: input) {
+                return .image(data, snapshot.originalPath)
             }
+            if let text = snapshot.text { return .text(text) }
+            if let rtf = snapshot.rtf,
+               let attributed = try? NSAttributedString(data: rtf, options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil) {
+                return .text(attributed.string)
+            }
+            return nil
         }
-        return nil
-    }
-
-    private func fileURLFromPasteboard() -> URL? {
-        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
-           let url = urls.first {
-            return url
-        }
-        if let urlString = pasteboard.string(forType: .fileURL),
-           let url = URL(string: urlString) {
-            return url
-        }
-        return nil
-    }
-
-    private func pngData(from image: NSImage) -> Data? {
-        if let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-            return pngData(from: cgImage)
-        }
-        guard let tiff = image.tiffRepresentation else { return nil }
-        return pngData(from: tiff)
-    }
-
-    private func pngData(from data: Data) -> Data? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
-        return pngData(from: cgImage)
-    }
-
-    private func pngData(from url: URL) -> Data? {
-        if let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-           let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) {
-            return pngData(from: cgImage)
-        }
-        if let data = try? Data(contentsOf: url) {
-            return pngData(from: data)
-        }
-        return nil
-    }
-
-    private func pngData(from cgImage: CGImage) -> Data? {
-        let data = NSMutableData()
-        guard let dest = CGImageDestinationCreateWithData(
-            data,
-            UTType.png.identifier as CFString,
-            1,
-            nil
-        ) else { return nil }
-        CGImageDestinationAddImage(dest, cgImage, nil)
-        guard CGImageDestinationFinalize(dest) else { return nil }
-        return data as Data
-    }
-
-    private func isLikelyImageURL(_ url: URL) -> Bool {
-        let ext = url.pathExtension.lowercased()
-        let imageExts: Set<String> = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff", "heic", "heif", "avif"]
-        if imageExts.contains(ext) { return true }
-        let query = url.query?.lowercased() ?? ""
-        if query.contains("fmt=") || query.contains("format=") { return true }
-        return false
     }
 }

@@ -40,6 +40,16 @@ struct ClipboardDeliverySmoke {
         let superseded = await injector.deliverImage(data, targetPID: 100)
         try await newCopy.value
         try check(superseded.status == .copiedSessionSuperseded && posts == 1 && pb.string(forType: .string) == "newer clipboard", "never paste unrelated newer content")
-        print("PASS: 5 image delivery scenarios; isolated pasteboard, no keyboard events posted")
+        let cancelledBeforeWrite = Task { await injector.deliverImage(data, targetPID: 100) }
+        cancelledBeforeWrite.cancel()
+        let notWritten = await cancelledBeforeWrite.value
+        try check(notWritten.status == .copiedSessionSuperseded && pb.string(forType: .string) == "newer clipboard" && posts == 1,
+                  "cancelled task must not overwrite clipboard")
+        let cancelledBeforePost = Task { await injector.deliverImage(data, targetPID: 100) }
+        try await Task.sleep(nanoseconds: 10_000_000)
+        cancelledBeforePost.cancel()
+        let notPosted = await cancelledBeforePost.value
+        try check(notPosted.status == .copiedSessionSuperseded && posts == 1, "cancellation while settling must not send paste")
+        print("PASS: 7 image delivery scenarios; isolated pasteboard, no keyboard events posted")
     }
 }

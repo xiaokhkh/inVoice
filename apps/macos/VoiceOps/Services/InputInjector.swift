@@ -20,7 +20,7 @@ final class InputInjector {
         return true
     }
 
-    func insertViaPaste(_ text: String, restoreClipboard: Bool = true) -> Bool {
+    @MainActor func insertViaPaste(_ text: String, restoreClipboard: Bool = true) -> Bool {
         guard Permissions.hasAccessibility() else { return false }
 
         ClipboardObserver.shared.markInternalWrite()

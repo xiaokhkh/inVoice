@@ -170,3 +170,29 @@ Native UI checks:
 Release 0.3.0 verification: Release build, 66 core tests, clipboard smoke, assistant smoke,
 installed signature and doctor checks; native dark-mode home, settings, output mode, and
 assistant navigation inspected. Hardware pairing/OTA was not exercised in this UI iteration.
+
+## Clipboard performance and LRU (0.3.1)
+
+`swift test` adds retention tests for successful reuse without reordering, preview-only
+eviction, usage persistence across relaunch, and migration of capture dates and undo batches.
+`./tests/e2e/clipboard_smoke.sh` additionally checks background image capture and copy,
+byte-for-byte PNG preservation, JPEG conversion, file capture/deduplication, RTF fallback,
+capture cancellation, sensitive types, newer clipboard writes, cancelled paste events,
+success/failure LRU updates, copy-only delivery, and dormant hidden panels.
+These tests use generated data and named pasteboards; no real input events are posted.
+
+Reproduce the synthetic 4K PNG and 200-long-text benchmark sequentially:
+
+```bash
+./tests/performance/clipboard_benchmark.sh baseline
+./tests/performance/clipboard_benchmark.sh current
+```
+
+The baseline compiles clipboard storage from the last shipped 0.3.0 commit. Each run uses
+a temporary database and a deterministic image. Results report stage latency and caller
+time, not end-to-end clipboard latency. The image caller measurement excludes the worker's
+hashing and disk I/O; the benchmark drains each write before taking another sample.
+
+Manual acceptance: open and dismiss the quick panel, copy a large image, copy newer content
+while a history image is loading, and confirm that reopening refreshes history. Migration
+must preserve existing IDs, capture dates, pins, deletion state, and original image files.

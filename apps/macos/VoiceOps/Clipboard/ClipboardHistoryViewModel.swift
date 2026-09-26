@@ -35,10 +35,13 @@ final class ClipboardHistoryViewModel: ObservableObject {
     @Published private(set) var copiedID: UUID?
     @Published private(set) var isBusy = false
     @Published private(set) var isSearching = false
+    @Published private(set) var isTransferring = false
 
     private let store: ClipboardStore
     private let injector: FocusInjector
     private let pasteboard: NSPasteboard
+    private let loadImage: @Sendable (String) async -> Data?
+    private var isActive: Bool
     private var observer: Any?
     private var refreshGeneration = 0
     private var searchWorkItem: DispatchWorkItem?
@@ -51,9 +54,15 @@ final class ClipboardHistoryViewModel: ObservableObject {
         return formatter
     }()
 
-    init(store: ClipboardStore = .shared, injector: FocusInjector? = nil, pasteboard: NSPasteboard = .general) {
+    init(store: ClipboardStore = .shared, injector: FocusInjector? = nil, pasteboard: NSPasteboard = .general,
+         isActive: Bool = true,
+         loadImage: @escaping @Sendable (String) async -> Data? = { path in
+             await Task.detached(priority: .userInitiated) { ClipboardImageProcessor.loadStoredPNG(path: path) }.value
+         }) {
         self.store = store
         self.pasteboard = pasteboard
+        self.isActive = isActive
+        self.loadImage = loadImage
         self.injector = injector ?? FocusInjector()
         observer = NotificationCenter.default.addObserver(
             forName: ClipboardStore.didChangeNotification, object: nil, queue: .main
@@ -69,7 +78,19 @@ final class ClipboardHistoryViewModel: ObservableObject {
         feedbackWorkItem?.cancel()
     }
 
+    func setActive(_ active: Bool) {
+        guard active != isActive else { return }
+        isActive = active
+        if active { refresh(resetSelection: true) }
+        else {
+            searchWorkItem?.cancel()
+            refreshGeneration &+= 1
+            isSearching = false
+        }
+    }
+
     func refresh(resetSelection: Bool) {
+        guard isActive else { return }
         refreshGeneration &+= 1
         let generation = refreshGeneration
         let selectionID = selectedItem()?.id
@@ -93,6 +114,7 @@ final class ClipboardHistoryViewModel: ObservableObject {
     func setQuery(_ value: String) {
         guard value != query else { return }
         query = value
+        guard isActive else { return }
         isSearching = true
         refreshGeneration &+= 1
         searchWorkItem?.cancel()
@@ -132,7 +154,7 @@ final class ClipboardHistoryViewModel: ObservableObject {
     }
 
     func copySelected() {
-        if let item = selectedItem() { copyItem(item) }
+        if let item = selectedItem() { Task { await copyItem(item) } }
     }
 
     func deleteSelected() {
@@ -171,9 +193,13 @@ final class ClipboardHistoryViewModel: ObservableObject {
     }
 
     @discardableResult
-    func copyItem(_ item: ClipboardItem) -> Bool {
+    func copyItem(_ item: ClipboardItem) async -> Bool {
+        guard !isTransferring, !Task.isCancelled else { return false }
         guard !isSearching else { showMessage("正在搜索，请稍候"); return false }
+        isTransferring = true
+        defer { isTransferring = false }
         let pb = pasteboard
+        let originalChangeCount = pb.changeCount
         let didWrite: Bool
         switch item.type {
         case .text:
@@ -185,8 +211,13 @@ final class ClipboardHistoryViewModel: ObservableObject {
             pb.clearContents()
             didWrite = pb.setString(text, forType: .string)
         case .image:
-            guard let data = imageData(for: item) else {
+            showMessage("正在读取图片…")
+            guard let data = await imageData(for: item) else {
                 showMessage("图片文件已丢失，无法复制")
+                return false
+            }
+            guard !Task.isCancelled, pb.changeCount == originalChangeCount else {
+                showMessage("剪贴板已变化，请重新复制")
                 return false
             }
             ClipboardObserver.shared.markInternalWrite()
@@ -194,24 +225,37 @@ final class ClipboardHistoryViewModel: ObservableObject {
             // One image representation avoids pasting both a file and an image in rich editors.
             didWrite = pb.setData(data, forType: .png)
         }
+        if didWrite { store.markUsed(item.id) }
         showMessage(didWrite ? "已复制，可到其他应用粘贴" : "复制失败，请重试", copied: didWrite ? item.id : nil)
         return didWrite
     }
 
     /// The panel captures its destination when opened. A changed destination becomes copy-only.
     func pasteItem(_ item: ClipboardItem, targetPID: pid_t?) async -> Bool {
+        guard !isTransferring, !Task.isCancelled else { return false }
         guard !isSearching else { showMessage("正在搜索，请稍候"); return false }
+        isTransferring = true
+        defer { isTransferring = false }
+        let originalChangeCount = pasteboard.changeCount
         let result: FocusInjector.DeliveryResult
         switch item.type {
         case .text:
             guard let text = item.contentText else { return false }
-            result = await injector.deliver(text, targetPID: targetPID, restoreClipboard: false)
+            result = await injector.deliver(text, targetPID: targetPID, restoreClipboard: false, sessionGuard: { !Task.isCancelled })
         case .image:
-            guard let data = imageData(for: item) else {
+            showMessage("正在读取图片…")
+            guard let data = await imageData(for: item) else {
                 showMessage("图片文件已丢失，无法粘贴")
                 return false
             }
+            guard !Task.isCancelled, pasteboard.changeCount == originalChangeCount else {
+                showMessage("剪贴板已变化，请重新选择记录粘贴")
+                return false
+            }
             result = await injector.deliverImage(data, targetPID: targetPID)
+        }
+        if result.status != .failedClipboardWrite && result.status != .copiedSessionSuperseded {
+            store.markUsed(item.id)
         }
         if result.status == .inserted { return true }
         switch result.status {
@@ -258,11 +302,8 @@ final class ClipboardHistoryViewModel: ObservableObject {
         showMessage("图片文件已丢失，无法在访达中显示")
     }
 
-    private func imageData(for item: ClipboardItem) -> Data? {
-        guard let path = item.contentImagePath,
-              let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-              let source = CGImageSourceCreateWithData(data as CFData, nil),
-              CGImageSourceGetCount(source) > 0 else { return nil }
-        return data
+    private func imageData(for item: ClipboardItem) async -> Data? {
+        guard let path = item.contentImagePath else { return nil }
+        return await loadImage(path)
     }
 }

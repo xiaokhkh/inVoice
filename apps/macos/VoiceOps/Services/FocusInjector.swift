@@ -64,6 +64,7 @@ final class FocusInjector {
         await clipboard.acquireDeliverySlot()
         defer { clipboard.releaseDeliverySlot() }
 
+        guard !Task.isCancelled else { return DeliveryResult(status: .copiedSessionSuperseded) }
         guard sessionGuard() else {
             return copyOnly(text, status: .copiedSessionSuperseded)
         }
@@ -134,12 +135,14 @@ final class FocusInjector {
         guard !data.isEmpty else { return DeliveryResult(status: .failedClipboardWrite) }
         await clipboard.acquireDeliverySlot()
         defer { clipboard.releaseDeliverySlot() }
+        guard !Task.isCancelled else { return DeliveryResult(status: .copiedSessionSuperseded) }
         guard let prepared = clipboard.prepareImageForPaste(data) else {
             return DeliveryResult(status: .failedClipboardWrite)
         }
         guard accessibilityGranted() else { return DeliveryResult(status: .copiedNoPermission) }
         guard targetStillMatches(targetPID) else { return DeliveryResult(status: .copiedFocusChanged) }
         try? await Task.sleep(nanoseconds: 50_000_000)
+        guard !Task.isCancelled else { return DeliveryResult(status: .copiedSessionSuperseded) }
         guard targetStillMatches(targetPID) else { return DeliveryResult(status: .copiedFocusChanged) }
         guard clipboard.isUnchanged(since: prepared) else { return DeliveryResult(status: .copiedSessionSuperseded) }
         let vKeyCode = Self.keyCode(forCharacter: "v") ?? CGKeyCode(kVK_ANSI_V)

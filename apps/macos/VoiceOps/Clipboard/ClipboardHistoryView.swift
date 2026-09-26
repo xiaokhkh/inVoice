@@ -54,7 +54,7 @@ struct ClipboardHistoryView: View {
                             ClipboardItemRowView(
                                 item: item, isSelected: index == viewModel.selectedIndex,
                                 metaText: viewModel.metaText(for: item),
-                                onSelect: { viewModel.selectIndex(index) }, onCopy: { viewModel.copyItem(item) },
+                                onSelect: { viewModel.selectIndex(index) }, onCopy: { Task { await viewModel.copyItem(item) } },
                                 onPin: { viewModel.togglePinned(item) }, onInject: { onInject(item) },
                                 onDelete: { viewModel.deleteItem(item) }, onHoverImage: onHoverImage
                             ).id(item.id)
@@ -75,7 +75,7 @@ struct ClipboardHistoryView: View {
                 }
                 Button("粘贴") {
                     if let item = viewModel.selectedItem() { onInject(item) }
-                }.buttonStyle(.borderedProminent).controlSize(.small).disabled(viewModel.selectedItem() == nil || viewModel.isSearching)
+                }.buttonStyle(.borderedProminent).controlSize(.small).disabled(viewModel.selectedItem() == nil || viewModel.isSearching || viewModel.isTransferring)
             }.frame(minHeight: 28)
         }
         .padding(18).frame(width: 600, height: 490)

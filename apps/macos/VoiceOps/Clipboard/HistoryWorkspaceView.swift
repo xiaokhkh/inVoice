@@ -98,7 +98,7 @@ struct HistoryWorkspaceView: View {
                     }
                     .padding(.vertical, 7).tag(item.id).id(item.id)
                     .contextMenu {
-                        Button("复制") { model.copyItem(item) }
+                        Button("复制") { Task { await model.copyItem(item) } }
                         Button(item.pinned ? "取消固定" : "固定") { model.togglePinned(item) }
                         if item.type == .image { Button("在访达中显示") { model.revealImage(item) } }
                         Divider()
@@ -149,10 +149,10 @@ struct HistoryWorkspaceView: View {
                     Button(role: .destructive) { model.deleteItem(item) } label: { Image(systemName: "trash") }
                         .help("删除记录，可撤销").accessibilityLabel("删除当前记录").disabled(model.isBusy || model.isSearching)
                     Spacer()
-                    Button { model.copyItem(item) } label: {
+                    Button { Task { await model.copyItem(item) } } label: {
                         Label(model.copiedID == item.id ? "已复制" : "复制内容", systemImage: model.copiedID == item.id ? "checkmark" : "doc.on.doc")
                     }
-                    .disabled(model.isSearching)
+                    .disabled(model.isSearching || model.isTransferring)
                     .buttonStyle(.borderedProminent).keyboardShortcut("c", modifiers: [.command, .shift])
                     .help("复制完整内容 · ⇧⌘C")
                 }
@@ -201,7 +201,7 @@ struct HistoryWorkspaceView: View {
                 }
             }.frame(minHeight: 24)
             Label("仅保存在本机", systemImage: "lock")
-                .help("保留最近 200 条记录，固定内容额外保留。可在右上角暂停收集。")
+                .help("保留最近使用的 200 条记录，固定内容额外保留。成功复制或粘贴会延长保留时间，列表仍按收集时间排列。")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
         }
     }

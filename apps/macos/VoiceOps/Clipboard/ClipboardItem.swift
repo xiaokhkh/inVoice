@@ -25,4 +25,5 @@ struct ClipboardItem: Identifiable, Hashable {
     let voiceIntent: String?
     let llmUsed: String?
     let appBundleID: String?
+    var lastUsedAt: Int64 = 0
 }

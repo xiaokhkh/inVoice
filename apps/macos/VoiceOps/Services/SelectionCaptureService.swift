@@ -162,7 +162,7 @@ actor SelectionCaptureService {
             let backup = snapshotPasteboard(pb)
             let initialChangeCount = pb.changeCount
 
-            ClipboardObserver.shared.markInternalWrite(duration: 1.2)
+            await ClipboardObserver.shared.markInternalWrite(duration: 1.2)
             guard postCopyEvent() else {
                 return .failure(.copyEventFailed)
             }

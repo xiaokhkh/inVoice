@@ -18,7 +18,7 @@ let package = Package(
             path: "apps/macos/VoiceOps/Clipboard",
             exclude: ["ClipboardObserver.swift", "ClipboardHistoryViewModel.swift", "ClipboardHistoryPanel.swift",
                       "ClipboardHistoryPanelController.swift", "ClipboardHistoryView.swift", "ClipboardItemRowView.swift",
-                      "HistoryWorkspaceView.swift"],
+                      "HistoryWorkspaceView.swift", "ClipboardImageProcessor.swift"],
             sources: ["ClipboardItem.swift", "ClipboardStore.swift"]
         ),
         .testTarget(name: "ClipboardStorageTests", dependencies: ["ClipboardStorage"], path: "tests/ClipboardStorageTests"),
