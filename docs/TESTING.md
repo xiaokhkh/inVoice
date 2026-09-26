@@ -144,3 +144,29 @@ copy feedback, native search editing, arrow navigation, Escape, and fallback mes
 Verify the installed app's quick-panel paste against a disposable editor field, including
 image paste and switching applications before delivery. The temporary preview app may
 lack Accessibility permission, in which case it should copy with recovery guidance.
+
+## Focused workspace and assistant (0.3.0)
+
+```bash
+./tests/e2e/assistant_smoke.sh
+```
+
+This compiles the shipping assistant conversation model with an injected stream.
+It verifies draft/conversation preservation on reopen, selected-text translation,
+coalesced token bursts, exact final output, partial-output cancellation, rejection of
+late output after reset, error recovery, and retry without duplicating turns.
+It does not call a model, read the user's clipboard, or post keyboard events.
+
+Native UI checks:
+
+- `⌘1`, `⌘2`, `⌘3`, and `⌘,` navigate to the expected workspace or window.
+- Output mode and existing preferences survive upgrades; opening settings changes no preference.
+- The clipboard search, More menu, paused banner, and quick-panel entry remain discoverable.
+- Assistant native close and Escape preserve conversation/draft within the current process;
+  `⌘ Return` sends, New conversation resets, and Escape in another window is unaffected.
+- Check neutral colors in light/dark appearances and motion with Reduce Motion enabled.
+- Confirm model failures display recovery guidance without a permanent loading indicator.
+
+Release 0.3.0 verification: Release build, 66 core tests, clipboard smoke, assistant smoke,
+installed signature and doctor checks; native dark-mode home, settings, output mode, and
+assistant navigation inspected. Hardware pairing/OTA was not exercised in this UI iteration.

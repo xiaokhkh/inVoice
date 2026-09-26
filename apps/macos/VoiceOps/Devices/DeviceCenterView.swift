@@ -10,14 +10,14 @@ struct DeviceCenterView: View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top) {
                 PreferencesHeader(
-                    title: "Devices",
-                    subtitle: "Pair, select, and manage every inVoice input device in one place."
+                    title: "设备",
+                    subtitle: "连接输入设备，按住就能说话。"
                 )
                 Spacer()
                 Button {
                     isAddingDevice = true
                 } label: {
-                    Label("Add Device", systemImage: "plus")
+                    Label("添加设备", systemImage: "plus")
                 }
                 .buttonStyle(.borderedProminent)
             }
@@ -38,7 +38,7 @@ struct DeviceCenterView: View {
 
     private var deviceList: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("MY DEVICES")
+            Text("我的设备")
                 .font(.caption.weight(.semibold))
                 .foregroundColor(.secondary)
             if manager.snapshots.isEmpty {
@@ -46,13 +46,13 @@ struct DeviceCenterView: View {
                     Image(systemName: "wave.3.right.circle")
                         .font(.system(size: 30))
                         .foregroundColor(.secondary)
-                    Text("No wireless devices")
+                    Text("还没有无线设备")
                         .font(.headline)
-                    Text("USB input remains available. Add a StopWatch when you are ready.")
+                    Text("内建和 USB 麦克风可直接使用。也可以连接 StopWatch。")
                         .font(.caption)
                         .multilineTextAlignment(.center)
                         .foregroundColor(.secondary)
-                    Button("Add StopWatch") { isAddingDevice = true }
+                    Button("添加 StopWatch") { isAddingDevice = true }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding()
@@ -85,9 +85,9 @@ struct DeviceCenterView: View {
                 Image(systemName: "rectangle.and.hand.point.up.left")
                     .font(.system(size: 28))
                     .foregroundColor(.secondary)
-                Text("Select a device")
+                Text("选择一个设备")
                     .font(.headline)
-                Text("Device identity, connection, binding, and audio state appear here.")
+                Text("连接状态和设备信息会显示在这里。")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -111,7 +111,7 @@ private struct DeviceListRow: View {
                     Text(snapshot.nickname)
                         .lineLimit(1)
                     if isDefault {
-                        Text("DEFAULT")
+                        Text("默认")
                             .font(.system(size: 8, weight: .bold))
                             .padding(.horizontal, 4)
                             .padding(.vertical, 2)
@@ -119,7 +119,7 @@ private struct DeviceListRow: View {
                             .clipShape(Capsule())
                     }
                 }
-                Text("\(snapshot.shortID) · \(isConnected ? "Connected" : stageLabel)")
+                Text("\(snapshot.shortID) · \(isConnected ? "已连接" : stageLabel)")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
@@ -130,13 +130,13 @@ private struct DeviceListRow: View {
 
     private var stageLabel: String {
         switch snapshot.stage {
-        case .ready: return "Ready"
-        case .audioLeased: return "Audio active"
-        case .busy: return "Busy"
-        case .authenticating: return "Authenticating"
-        case .reconnecting: return "Reconnecting"
-        case .offline: return "Offline"
-        default: return "Discovered"
+        case .ready: return "就绪"
+        case .audioLeased: return "正在收音"
+        case .busy: return "占用中"
+        case .authenticating: return "正在验证"
+        case .reconnecting: return "正在重连"
+        case .offline: return "离线"
+        default: return "已发现"
         }
     }
 
@@ -180,22 +180,25 @@ private struct DeviceDetailView: View {
                 }
 
                 SectionCard(
-                    title: "Status",
-                    subtitle: "Binding, discovery, session, and audio are tracked independently."
+                    title: "连接状态",
+                    subtitle: "查看设备是否准备好接收输入。"
                 ) {
-                    DeviceValueRow(label: "Binding", value: bindingLabel)
-                    DeviceValueRow(label: "Reachability", value: reachabilityLabel)
-                    DeviceValueRow(label: "Secure session", value: sessionLabel)
-                    DeviceValueRow(label: "Audio", value: audioLabel)
+                    DeviceValueRow(label: "配对", value: bindingLabel)
+                    DeviceValueRow(label: "发现方式", value: reachabilityLabel)
+                    DeviceValueRow(label: "安全连接", value: sessionLabel)
+                    DeviceValueRow(label: "音频", value: audioLabel)
                 }
 
-                SectionCard(title: "Device information", subtitle: "Identity follows the physical hardware, not its IP address.") {
-                    DeviceValueRow(label: "Firmware", value: snapshot.firmwareVersion)
-                    DeviceValueRow(label: "Protocol", value: "v\(snapshot.protocolVersion)")
-                    DeviceValueRow(label: "Binding epoch", value: String(snapshot.bindingEpoch))
+                DisclosureGroup("设备详情") {
+                SectionCard(title: "设备信息", subtitle: "设备身份始终跟随硬件。") {
+                    DeviceValueRow(label: "固件版本", value: snapshot.firmwareVersion)
+                    DeviceValueRow(label: "协议版本", value: "v\(snapshot.protocolVersion)")
+                    DeviceValueRow(label: "配对版本", value: String(snapshot.bindingEpoch))
                     if let battery = snapshot.batteryPercent {
-                        DeviceValueRow(label: "Battery", value: "\(battery)%")
+                        DeviceValueRow(label: "电量", value: "\(battery)%")
                     }
+                }
+
                 }
 
                 if let error = snapshot.lastError {
@@ -205,17 +208,17 @@ private struct DeviceDetailView: View {
                 }
 
                 HStack {
-                    Button(manager.defaultDeviceID == snapshot.deviceID ? "Default Device" : "Set as Default") {
+                    Button(manager.defaultDeviceID == snapshot.deviceID ? "默认设备" : "设为默认") {
                         manager.setDefault(deviceID: snapshot.deviceID)
                     }
                     .disabled(manager.defaultDeviceID == snapshot.deviceID)
 
                     if manager.connectedDeviceID == snapshot.deviceID {
-                        Button("Disconnect") {
+                        Button("断开连接") {
                             Task { await manager.disconnect() }
                         }
                     } else {
-                        Button("Connect") {
+                        Button("连接") {
                             Task { await manager.connect(deviceID: snapshot.deviceID) }
                         }
                         .disabled(
@@ -224,7 +227,7 @@ private struct DeviceDetailView: View {
                         )
                     }
 
-                    Button("Update Firmware…") { chooseFirmware() }
+                    Button("更新固件…") { chooseFirmware() }
                         .disabled(
                             manager.connectedDeviceID != snapshot.deviceID ||
                             snapshot.binding.role != .owner
@@ -234,7 +237,7 @@ private struct DeviceDetailView: View {
 
                 Divider()
 
-                Button("Remove This Mac…", role: .destructive) {
+                Button("移除此 Mac…", role: .destructive) {
                     confirmUnbind = true
                 }
                 .disabled(snapshot.binding.role != .owner)
@@ -247,48 +250,48 @@ private struct DeviceDetailView: View {
             }
             .padding(18)
         }
-        .alert("Remove this Mac from \(snapshot.nickname)?", isPresented: $confirmUnbind) {
-            Button("Cancel", role: .cancel) {}
-            Button("Remove", role: .destructive) {
+        .alert("从 \(snapshot.nickname) 移除此 Mac？", isPresented: $confirmUnbind) {
+            Button("取消", role: .cancel) {}
+            Button("移除", role: .destructive) {
                 Task { await manager.unbind(deviceID: snapshot.deviceID) }
             }
         } message: {
-            Text("The device revokes only this client credential. Other authorized clients are not affected.")
+            Text("只会移除此 Mac 的配对凭证，其他已授权设备不受影响。")
         }
     }
 
     private var bindingLabel: String {
         switch snapshot.binding {
-        case .unbound: return "Not paired"
-        case .credentialInvalid: return "Credential invalid · pair again"
+        case .unbound: return "未配对"
+        case .credentialInvalid: return "配对已失效，请重新配对"
         case .bound(let role): return role.rawValue.capitalized
         }
     }
 
     private var reachabilityLabel: String {
         switch snapshot.reachability {
-        case .offline: return "Offline"
-        case .ble: return "Bluetooth visible"
-        case .bonjour: return "Bonjour / Wi-Fi visible"
-        case .bleAndBonjour: return "Bluetooth + Bonjour visible"
+        case .offline: return "离线"
+        case .ble: return "通过蓝牙发现"
+        case .bonjour: return "通过 Wi-Fi 发现"
+        case .bleAndBonjour: return "通过蓝牙与 Wi-Fi 发现"
         }
     }
 
     private var sessionLabel: String {
         switch snapshot.session {
-        case .disconnected: return "Disconnected"
-        case .connecting: return "Connecting"
-        case .authenticating: return "Mutual authentication"
-        case .authenticated: return "Authenticated"
-        case .reconnecting: return "Reconnecting"
+        case .disconnected: return "未连接"
+        case .connecting: return "正在连接"
+        case .authenticating: return "正在验证身份"
+        case .authenticated: return "已验证"
+        case .reconnecting: return "正在重连"
         }
     }
 
     private var audioLabel: String {
         switch snapshot.audio {
-        case .idle: return "Idle"
-        case .leased: return "Leased to inVoice"
-        case .expired: return "Lease expired"
+        case .idle: return "空闲"
+        case .leased: return "inVoice 正在使用"
+        case .expired: return "使用已结束"
         case .busy(let appID, _): return "Busy\(appID.map { " · \($0)" } ?? "")"
         }
     }
@@ -304,14 +307,14 @@ private struct DeviceDetailView: View {
             do {
                 let image = try Data(contentsOf: url)
                 guard !image.isEmpty else {
-                    operationMessage = "The selected firmware image is empty."
+                    operationMessage = "所选固件文件为空。"
                     return
                 }
-                operationMessage = "Uploading signed firmware…"
+                operationMessage = "正在上传固件…"
                 await manager.updateFirmware(image, deviceID: snapshot.deviceID)
-                operationMessage = "Update request sent. The device will verify and restart."
+                operationMessage = "已发送更新，设备将验证固件并重启。"
             } catch {
-                operationMessage = "Could not read the firmware image."
+                operationMessage = "无法读取固件文件。"
             }
         }
     }
@@ -332,13 +335,13 @@ private struct DeviceStateBadge: View {
 
     private var label: String {
         switch snapshot.stage {
-        case .ready: return "READY"
-        case .audioLeased: return "AUDIO ACTIVE"
-        case .busy: return "BUSY"
-        case .authenticating: return "AUTHENTICATING"
-        case .reconnecting: return "RECONNECTING"
-        case .offline: return "OFFLINE"
-        default: return "DISCOVERED"
+        case .ready: return "就绪"
+        case .audioLeased: return "正在收音"
+        case .busy: return "占用中"
+        case .authenticating: return "正在验证"
+        case .reconnecting: return "正在重连"
+        case .offline: return "离线"
+        default: return "已发现"
         }
     }
 
@@ -384,7 +387,7 @@ private struct AddDeviceFlow: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Add StopWatch")
+                    Text("添加 StopWatch")
                         .font(.title2.weight(.semibold))
                     Text(stepTitle)
                         .font(.callout)
@@ -392,7 +395,7 @@ private struct AddDeviceFlow: View {
                 }
                 Spacer()
                 BLELinkBadge(state: provisioning.bleLinkState)
-                Button("Cancel") { isPresented = false }
+                Button("取消") { isPresented = false }
                     .disabled(provisioning.isBusy && !isWaitingForNetwork)
             }
             .padding(20)
@@ -406,7 +409,7 @@ private struct AddDeviceFlow: View {
                 case .connecting:
                     progressStep(
                         symbol: "antenna.radiowaves.left.and.right",
-                        title: "Connecting over Bluetooth",
+                        title: "正在连接蓝牙",
                         detail: provisioning.statusText
                     )
                 case .confirmingIdentity:
@@ -416,25 +419,25 @@ private struct AddDeviceFlow: View {
                 case .securePairing:
                     progressStep(
                         symbol: "lock.shield",
-                        title: "Creating the secure binding",
+                        title: "正在完成配对",
                         detail: provisioning.statusText
                     )
                 case .provisioningWiFi:
                     progressStep(
                         symbol: "wifi",
-                        title: "Sending Wi-Fi configuration",
-                        detail: "Credentials are sent only through the selected BLE session and are never logged."
+                        title: "正在配置 Wi-Fi",
+                        detail: "网络信息只会发送给选中的设备，不会写入日志。"
                     )
                 case .awaitingBonjour:
                     progressStep(
                         symbol: "network",
-                        title: "Finding the same device on Wi-Fi",
-                        detail: "Setup finishes only after Bonjour returns the same device ID and mutual authentication succeeds."
+                        title: "正在查找 Wi-Fi 设备",
+                        detail: "正在确认网络中的设备身份。"
                     )
                 case .authenticating:
                     progressStep(
                         symbol: "checkmark.shield",
-                        title: "Authenticating both sides",
+                        title: "正在验证连接",
                         detail: provisioning.statusText
                     )
                 case .complete(let deviceID):
@@ -460,9 +463,9 @@ private struct AddDeviceFlow: View {
 
     private var discoveryStep: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label("Nearby devices", systemImage: "dot.radiowaves.left.and.right")
+            Label("附近的设备", systemImage: "dot.radiowaves.left.and.right")
                 .font(.headline)
-            Text("Choose a device explicitly. Names are only labels; the next step verifies its permanent device ID.")
+            Text("选择要连接的设备，下一步会核对设备编号。")
                 .font(.callout)
                 .foregroundColor(.secondary)
 
@@ -511,14 +514,14 @@ private struct AddDeviceFlow: View {
                     .font(.title3.monospaced().weight(.medium))
                 Text(identity.model)
                     .foregroundColor(.secondary)
-                Text("Check that the short ID \(identity.deviceID.split(separator: "-").last ?? "") is shown on the StopWatch before continuing.")
+                Text("确认 StopWatch 屏幕上的编号为 \(identity.deviceID.split(separator: "-").last ?? "")，再继续。")
                     .font(.callout)
                     .multilineTextAlignment(.center)
                     .foregroundColor(.secondary)
                     .frame(maxWidth: 420)
                 HStack {
-                    Button("Choose Another Device") { provisioning.cancelSelection() }
-                    Button("ID Matches") {
+                    Button("选择其他设备") { provisioning.cancelSelection() }
+                    Button("编号一致") {
                         manager.recordBLEIdentity(
                             deviceID: identity.deviceID,
                             nickname: identity.nickname,
@@ -537,52 +540,52 @@ private struct AddDeviceFlow: View {
     private var pairingStep: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Label("Physical confirmation", systemImage: "hand.tap")
+                Label("在设备上确认", systemImage: "hand.tap")
                     .font(.headline)
                 Spacer()
                 Text(countdownLabel)
                     .font(.caption.monospacedDigit())
                     .foregroundColor(secondsRemaining > 15 ? .secondary : .orange)
             }
-            Text("Long-press the button on the selected StopWatch. Enter only the six-digit code shown on that device.")
+            Text("长按 StopWatch 上的按钮，输入屏幕显示的六位配对码。")
                 .font(.callout)
                 .foregroundColor(.secondary)
 
-            TextField("Six-digit pairing code", text: $pairingCode)
+            TextField("六位配对码", text: $pairingCode)
                 .textFieldStyle(.roundedBorder)
                 .font(.title3.monospacedDigit())
 
             if secondsRemaining == 0 {
                 HStack {
-                    Label("The local pairing timer expired.", systemImage: "clock.badge.exclamationmark")
+                    Label("配对已超时。", systemImage: "clock.badge.exclamationmark")
                         .font(.caption)
                         .foregroundColor(.orange)
                     Spacer()
-                    Button("Start a New 2-Minute Window") {
+                    Button("重新配对") {
                         pairingDeadline = Date().addingTimeInterval(WirelessProtocolV2.pairingWindow)
                         pairingCode = ""
                     }
                 }
             }
 
-            Toggle("Configure or update this device's Wi-Fi", isOn: $configureWiFi)
+            Toggle("配置设备的 Wi-Fi", isOn: $configureWiFi)
 
             if configureWiFi {
-                TextField("Wi-Fi name (SSID)", text: $lastSSID)
+                TextField("Wi-Fi 名称", text: $lastSSID)
                     .textFieldStyle(.roundedBorder)
-                SecureField("Wi-Fi password", text: $wifiPassword)
+                SecureField("Wi-Fi 密码", text: $wifiPassword)
                     .textFieldStyle(.roundedBorder)
             } else {
-                Text("Use this only when the selected device is already on the same local network.")
+                Text("仅当设备已连接到同一个局域网时，才可跳过网络配置。")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
 
             Spacer()
             HStack {
-                Button("Back") { provisioning.cancelSelection() }
+                Button("返回") { provisioning.cancelSelection() }
                 Spacer()
-                Button("Pair and Continue") {
+                Button("配对并继续") {
                     let accepted: Bool
                     if configureWiFi {
                         accepted = provisioning.configure(
@@ -628,19 +631,19 @@ private struct AddDeviceFlow: View {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 52))
                 .foregroundColor(.green)
-            Text("Device Ready")
+            Text("设备已就绪")
                 .font(.title2.weight(.semibold))
-            Text("\(deviceID) was found by Bonjour and completed mutual authentication. It is now available in Device Center.")
+            Text("\(deviceID) 已连接，现在可以开始使用。")
                 .font(.callout)
                 .multilineTextAlignment(.center)
                 .foregroundColor(.secondary)
                 .frame(maxWidth: 440)
             HStack {
-                Button("Done") {
+                Button("完成") {
                     manager.select(deviceID: deviceID)
                     isPresented = false
                 }
-                Button("Use as Default") {
+                Button("设为默认") {
                     manager.setDefault(deviceID: deviceID)
                     isPresented = false
                 }
@@ -654,7 +657,7 @@ private struct AddDeviceFlow: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 42))
                 .foregroundColor(.orange)
-            Text("Setup could not continue")
+            Text("暂时无法完成设置")
                 .font(.title3.weight(.semibold))
             Text(error.message)
                 .multilineTextAlignment(.center)
@@ -664,8 +667,8 @@ private struct AddDeviceFlow: View {
                 .font(.caption.monospaced())
                 .foregroundColor(.secondary)
             HStack {
-                Button("Cancel") { isPresented = false }
-                Button(error.recovery == .rescan ? "Scan Again" : "Try Again") {
+                Button("取消") { isPresented = false }
+                Button(error.recovery == .rescan ? "重新搜索" : "重试") {
                     provisioning.retryAfterFailure()
                 }
                     .buttonStyle(.borderedProminent)
@@ -675,13 +678,13 @@ private struct AddDeviceFlow: View {
 
     private var stepTitle: String {
         switch provisioning.phase {
-        case .idle, .scanning: return "1 of 5 · Choose a nearby device"
-        case .connecting, .confirmingIdentity: return "2 of 5 · Verify physical identity"
-        case .awaitingPhysicalConfirmation, .securePairing: return "3 of 5 · Pair securely"
-        case .provisioningWiFi: return "4 of 5 · Configure Wi-Fi"
-        case .awaitingBonjour, .authenticating: return "5 of 5 · Verify the Wi-Fi connection"
-        case .complete: return "Complete"
-        case .failed: return "Recovery"
+        case .idle, .scanning: return "1 / 5 · 选择设备"
+        case .connecting, .confirmingIdentity: return "2 / 5 · 核对编号"
+        case .awaitingPhysicalConfirmation, .securePairing: return "3 / 5 · 完成配对"
+        case .provisioningWiFi: return "4 / 5 · 配置 Wi-Fi"
+        case .awaitingBonjour, .authenticating: return "5 / 5 · 确认连接"
+        case .complete: return "已完成"
+        case .failed: return "恢复连接"
         }
     }
 
@@ -700,7 +703,7 @@ private struct AddDeviceFlow: View {
 
     private var countdownLabel: String {
         let seconds = secondsRemaining
-        return String(format: "%d:%02d remaining", seconds / 60, seconds % 60)
+        return String(format: "剩余 %d:%02d", seconds / 60, seconds % 60)
     }
 
     private var isWaitingForNetwork: Bool {
@@ -711,11 +714,11 @@ private struct AddDeviceFlow: View {
     }
 
     private func signalLabel(_ rssi: Int) -> String {
-        if rssi == 0 { return "Connected"
+        if rssi == 0 { return "已连接"
         }
-        if rssi > -60 { return "Strong" }
-        if rssi > -75 { return "Good" }
-        return "Weak"
+        if rssi > -60 { return "强" }
+        if rssi > -75 { return "良好" }
+        return "弱"
     }
 
     private func synchronizeNetworkAuthentication() {
@@ -749,14 +752,14 @@ private struct BLELinkBadge: View {
 
     private var label: String {
         switch state {
-        case .unavailable: return "Bluetooth unavailable"
-        case .scanning: return "Scanning"
-        case .connecting: return "BLE connecting"
-        case .connected: return "BLE connected"
-        case .identityVerified: return "Device verified"
-        case .bindingSecured: return "Binding secured"
-        case .wifiHandoff: return "Using Wi-Fi"
-        case .failed: return "BLE needs attention"
+        case .unavailable: return "蓝牙不可用"
+        case .scanning: return "正在搜索"
+        case .connecting: return "正在连接蓝牙"
+        case .connected: return "蓝牙已连接"
+        case .identityVerified: return "设备已确认"
+        case .bindingSecured: return "配对已完成"
+        case .wifiHandoff: return "已连接 Wi-Fi"
+        case .failed: return "请检查蓝牙"
         }
     }
 

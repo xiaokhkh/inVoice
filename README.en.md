@@ -87,14 +87,27 @@ VID/PID, so docks and unrelated keyboards cannot create a second recording.
 
 ### Clipboard history
 
-Open **History** in the main window for full text and image previews, or use
+Open **Clipboard (剪贴板)** in the main window for full text and image previews, or use
 `Command + Fn` to search and paste into the app you were using.
 
 - Filter by all clips, pinned clips, text, images, or voice input. Search text and image filenames, including Chinese and literal punctuation.
 - Pin frequently used clips. The latest 200 ordinary clips are kept, with pinned clips retained separately.
-- Delete individual clips or use **Manage → Clear unpinned**. The last deletion/cleanup batch can be undone, including after relaunch, until another deletion replaces it.
+- Delete individual clips or use **More (更多) → Clear unpinned**. The last deletion/cleanup batch can be undone, including after relaunch, until another deletion replaces it.
 - The quick panel supports native text editing and input methods: `↑/↓` selects, `Return` pastes, `Esc` closes, and `Command + Delete` deletes. `Command + C` copies selected search text when there is a selection, otherwise it copies the selected clip.
-- In the main window, `Command + F` focuses search and `Shift + Command + C` copies the full selected clip. Clipboard capture can be paused directly on the History page.
+- In the main window, `Command + F` focuses search and `Shift + Command + C` copies the full selected clip. Pause capture in the Clipboard page's **More** menu; a visible banner lets you resume it.
+
+### A focused workspace (0.3.0)
+
+The sidebar contains Dictation, Clipboard, and Assistant, with Settings at the bottom.
+`Command + 1/2/3` opens these everyday tools; `Command + ,` opens Settings.
+The home page provides one dictation practice field and an output-mode menu.
+Advanced recognition, service metrics, device details, and model prompts are available on demand in Settings.
+
+The assistant follows the system appearance and uses standard macOS window controls.
+Closing and reopening it preserves the conversation and draft during the current app session;
+**New conversation** clears them explicitly. Selected-text translation starts a new conversation.
+Send with `Command + Return`; Escape closes only the active assistant panel.
+Streamed token bursts are coalesced into at most 25 text updates per second.
 
 
 ## Supported microphone hardware

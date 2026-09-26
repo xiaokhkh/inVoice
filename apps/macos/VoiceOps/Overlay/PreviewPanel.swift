@@ -67,7 +67,7 @@ final class PreviewPanel: NSPanel {
         transitionGeneration &+= 1
         let generation = transitionGeneration
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.16
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.16
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             animator().alphaValue = 0
         } completionHandler: { [weak self] in
@@ -117,7 +117,7 @@ final class PreviewPanel: NSPanel {
             width: panelWidth,
             height: PreviewLayout.panelHeight
         )
-        guard animated, isVisible else {
+        guard animated, isVisible, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
             setFrame(targetFrame, display: true)
             return
         }

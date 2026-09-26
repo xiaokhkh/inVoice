@@ -43,17 +43,17 @@ enum SelectionCaptureResult: Equatable {
         case .success:
             return ""
         case .empty(.noSelection):
-            return "No text selected."
+            return "没有选中文字。"
         case .empty(.nonTextSelection):
-            return "Selection contains no text."
+            return "选中的内容不包含文字。"
         case .empty(.clipboardUnchanged):
-            return "Unable to capture selection."
+            return "未能读取选中的文字。"
         case .failure(.accessibilityDenied):
-            return "Enable Accessibility access to capture selections."
+            return "请在设置中允许辅助功能，以读取选中文字。"
         case .failure(.eventSourceFailed):
-            return "Failed to access input events."
+            return "暂时无法读取输入事件，请重试。"
         case .failure(.copyEventFailed):
-            return "Failed to copy selection."
+            return "未能复制选中文字，请重试。"
         }
     }
 }

@@ -6,6 +6,7 @@ struct PreviewView: View {
     let onCopy: (String) -> Void
     let onOpenSettings: () -> Void
     @State private var didCopy = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let codexBlack = Color(white: 0.15)
     private let microphoneGray = Color(white: 0.27)
@@ -34,7 +35,7 @@ struct PreviewView: View {
         }
         .padding(PreviewLayout.renderingInset)
         .environment(\.colorScheme, .dark)
-        .animation(.easeOut(duration: 0.16), value: model.state)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: model.state)
         .onChange(of: model.text) { _ in didCopy = false }
     }
 
@@ -81,7 +82,7 @@ struct PreviewView: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .help("关闭")
+            .help("关闭").accessibilityLabel("关闭提示")
 
             previewText
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -97,7 +98,7 @@ struct PreviewView: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .help("文字已保留在剪贴板；点击再次复制")
+            .help("文字已保留在剪贴板；点击再次复制").accessibilityLabel(didCopy ? "已复制" : "复制文字")
         }
         .padding(.horizontal, 4)
         .transition(.opacity.combined(with: .scale(scale: 0.96)))
@@ -107,13 +108,13 @@ struct PreviewView: View {
         HStack(spacing: 8) {
             Button(action: onDismiss) {
                 Image(systemName: "xmark").frame(width: 24, height: 30)
-            }.buttonStyle(.plain).foregroundColor(.white.opacity(0.7)).help("关闭")
+            }.buttonStyle(.plain).foregroundColor(.white.opacity(0.7)).help("关闭").accessibilityLabel("关闭提示")
             Image(systemName: "exclamationmark.circle.fill").foregroundColor(.orange)
             Text(displayText).font(.system(size: 12)).foregroundColor(.white).lineLimit(1)
             Spacer(minLength: 0)
             Button(action: onOpenSettings) {
                 Image(systemName: "gearshape").frame(width: 28, height: 30)
-            }.buttonStyle(.plain).foregroundColor(.white).help("打开权限与诊断")
+            }.buttonStyle(.plain).foregroundColor(.white).help("打开权限与诊断").accessibilityLabel("打开权限与诊断")
         }.padding(.horizontal, 5)
     }
 
@@ -123,7 +124,7 @@ struct PreviewView: View {
             .foregroundColor(Color.white.opacity(0.96))
             .lineLimit(1)
             .truncationMode(.head)
-            .animation(.easeOut(duration: 0.12), value: displayText)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: displayText)
     }
 
     private var hasText: Bool {

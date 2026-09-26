@@ -84,14 +84,14 @@ struct ClipboardItemRowView: View {
             if item.type == .image {
                 ClipboardImageView(item: item).frame(width: 36, height: 36)
             } else {
-                Image(systemName: item.symbol).foregroundStyle(.indigo).frame(width: 36)
+                Image(systemName: item.symbol).foregroundStyle(Color.accentColor).frame(width: 36)
             }
             VStack(alignment: .leading, spacing: 5) {
                 Text(item.displayTitle).lineLimit(2).font(.system(size: 13))
                 Text(metaText).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             }.frame(maxWidth: .infinity, alignment: .leading)
             Button(action: onPin) { Image(systemName: item.pinned ? "pin.fill" : "pin") }
-                .buttonStyle(.plain).foregroundStyle(item.pinned ? .indigo : .secondary)
+                .buttonStyle(.plain).foregroundStyle(item.pinned ? Color.accentColor : Color.secondary)
                 .help(item.pinned ? "取消固定" : "固定，保留常用内容")
                 .accessibilityLabel(item.pinned ? "取消固定" : "固定")
             Button(action: onCopy) { Image(systemName: "doc.on.doc") }
@@ -99,7 +99,7 @@ struct ClipboardItemRowView: View {
                 .accessibilityLabel("复制这条记录")
         }
         .padding(10)
-        .background(isSelected ? Color.indigo.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 10))
+        .background(isSelected ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 10))
         .contentShape(Rectangle())
         .onTapGesture(count: 2, perform: onInject)
         .onTapGesture(perform: onSelect)

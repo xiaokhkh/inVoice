@@ -8,9 +8,17 @@ struct InVoiceApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        Settings {
-            PreferencesView()
-        }
+        Settings { PreferencesView() }
+            .commands {
+                CommandGroup(replacing: .appSettings) {
+                    Button("设置…") { appDelegate.openSettings() }.keyboardShortcut(",")
+                }
+                CommandMenu("前往") {
+                    Button("听写") { appDelegate.openDictationWorkspace() }.keyboardShortcut("1")
+                    Button("剪贴板") { appDelegate.openClipboardWorkspace() }.keyboardShortcut("2")
+                    Button("助手") { NotificationCenter.default.post(name: .inVoiceOpenAssistant, object: nil) }.keyboardShortcut("3")
+                }
+            }
     }
 }
 
@@ -71,8 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NotificationCenter.default.publisher(for: .inVoiceOpenHistory)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.openPreferences()
-                NotificationCenter.default.post(name: .inVoiceSelectHistory, object: nil)
+                self?.openClipboardWorkspace()
             }
             .store(in: &cancellables)
         Task { await ProductStatus.shared.waitForStartup() }
@@ -155,20 +162,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
 
         let dictationItem = NSMenuItem(title: "开始听写…", action: #selector(toggleDictation), keyEquivalent: "")
-        let clipboardItem = NSMenuItem(title: "剪贴板历史…", action: #selector(showClipboardHistory), keyEquivalent: "")
-        let translateItem = NSMenuItem(title: "打开本地助手…", action: #selector(translateSelection), keyEquivalent: "")
+        let clipboardItem = NSMenuItem(title: "剪贴板…", action: #selector(showClipboardHistory), keyEquivalent: "")
+        let translateItem = NSMenuItem(title: "助手…", action: #selector(translateSelection), keyEquivalent: "")
         let setupItem = NSMenuItem(title: setupSummary, action: nil, keyEquivalent: "")
         let inputItem = NSMenuItem(title: deviceManager.inputSourceSummary, action: nil, keyEquivalent: "")
         let audioItem = NSMenuItem(title: deviceManager.audioSummary, action: nil, keyEquivalent: "")
-        let preferencesItem = NSMenuItem(title: "打开 inVoice…", action: #selector(openPreferences), keyEquivalent: ",")
-        let revealItem = NSMenuItem(title: "在 Finder 中显示应用", action: #selector(revealApp), keyEquivalent: "")
+        let preferencesItem = NSMenuItem(title: "打开 inVoice", action: #selector(openPreferences), keyEquivalent: "")
+        let settingsItem = NSMenuItem(title: "设置…", action: #selector(openSettings), keyEquivalent: ",")
+        let deviceItem = NSMenuItem(title: "输入设备", action: nil, keyEquivalent: "")
+        deviceItem.submenu = NSMenu()
+        deviceItem.submenu?.addItem(inputItem)
+        deviceItem.submenu?.addItem(audioItem)
         let quitItem = NSMenuItem(title: "退出 inVoice", action: #selector(quitApp), keyEquivalent: "q")
 
         dictationItem.target = self
         clipboardItem.target = self
         translateItem.target = self
         preferencesItem.target = self
-        revealItem.target = self
+        settingsItem.target = self
         quitItem.target = self
         setupItem.isEnabled = false
         inputItem.isEnabled = false
@@ -179,10 +190,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(translateItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(setupItem)
-        menu.addItem(inputItem)
-        menu.addItem(audioItem)
+        menu.addItem(deviceItem)
         menu.addItem(preferencesItem)
-        menu.addItem(revealItem)
+        menu.addItem(settingsItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(quitItem)
 
@@ -255,7 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 modifiers: UInt32(cmdKey | optionKey)
             ) { [weak self] in
                 Task { @MainActor [weak self] in
-                    self?.openPreferences()
+                    self?.openSettings()
                 }
             }
         } catch {
@@ -594,11 +604,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             dictationMenuItem?.isEnabled = false
         case .ready:
             setStatusTitle("inVoice ✓")
-            dictationMenuItem?.title = "Start New Dictation…"
+            dictationMenuItem?.title = "开始新的听写…"
             dictationMenuItem?.isEnabled = true
         case .error:
             setStatusTitle("inVoice !")
-            dictationMenuItem?.title = "Try Dictation Again…"
+            dictationMenuItem?.title = "重新听写…"
             dictationMenuItem?.isEnabled = true
         }
     }
@@ -652,6 +662,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    @objc func openSettings() {
+        openPreferences()
+        NotificationCenter.default.post(name: .inVoiceSelectSettings, object: nil)
+    }
+
+    func openDictationWorkspace() {
+        openPreferences()
+        NotificationCenter.default.post(name: .inVoiceSelectHome, object: nil)
+    }
+
+    func openClipboardWorkspace() {
+        openPreferences()
+        NotificationCenter.default.post(name: .inVoiceSelectHistory, object: nil)
+    }
+
     @objc private func openPreferences() {
         NSApp.activate(ignoringOtherApps: true)
         if settingsWindowController == nil {
@@ -668,7 +693,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         window.identifier = NSUserInterfaceItemIdentifier("inVoiceWorkspace")
         window.setFrameAutosaveName("inVoiceWorkspace")
         window.minSize = NSSize(width: 860, height: 660)
-        window.setContentSize(NSSize(width: 1040, height: 790))
+        window.setContentSize(NSSize(width: 960, height: 720))
+        window.titlebarSeparatorStyle = .none
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.isReleasedWhenClosed = false
         window.center()
@@ -790,7 +816,7 @@ struct PermissionsPanelView: View {
             VStack(alignment: .leading, spacing: 18) {
                 PreferencesHeader(
                     title: "系统权限",
-                    subtitle: "仅用于录音、全局快捷键，以及把结果输入到当前应用。"
+                    subtitle: "允许录音、快捷键和自动粘贴，即可开始听写。"
                 )
 
                 SectionCard(title: "系统授权", subtitle: "授权后返回此窗口，状态会自动更新。") {
@@ -825,6 +851,8 @@ struct PermissionsPanelView: View {
                     )
                 }
 
+                DisclosureGroup("安装与诊断详情") {
+                    VStack(spacing: 16) {
                 SectionCard(title: "本地识别环境", subtitle: "本机模型与运行环境的安装检查。") {
                     InfoRow(
                         title: "运行环境位置",
@@ -876,6 +904,9 @@ struct PermissionsPanelView: View {
                         }
                     }
                 }
+
+                    }.padding(.top, 12)
+                }.font(.system(size: 13, weight: .medium))
 
                 Text("密码框等安全输入场景中，macOS 会暂时阻止全局快捷键。")
                     .font(.caption2)
@@ -1033,9 +1064,9 @@ struct PreferencesHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.title2.weight(.semibold))
+                .font(.system(size: 23, weight: .semibold))
             Text(subtitle)
-                .font(.callout)
+                .font(.system(size: 13))
                 .foregroundColor(.secondary)
         }
     }
@@ -1069,12 +1100,12 @@ struct SectionCard<Content: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(nsColor: .windowBackgroundColor))
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .textBackgroundColor))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.secondary.opacity(0.12))
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.primary.opacity(0.06))
         )
     }
 }
@@ -1244,206 +1275,6 @@ struct ShortcutRecorderRow: View {
     }
 }
 
-@MainActor
-final class SelectionTranslationViewModel: ObservableObject {
-    struct ChatMessage: Identifiable, Equatable {
-        enum Role {
-            case user
-            case assistant
-        }
-
-        enum Kind {
-            case selection
-            case chat
-        }
-
-        let id = UUID()
-        let role: Role
-        var content: String
-        let kind: Kind
-    }
-
-    enum State: Equatable {
-        case idle
-        case translating
-        case ready
-        case error(String)
-    }
-
-    @Published var state: State = .idle
-    @Published var messages: [ChatMessage] = []
-    @Published var composerText: String = ""
-    @Published private(set) var selectedText: String = ""
-    @Published private(set) var captureSource: SelectionCaptureSource?
-    @Published private(set) var composerFocusRequest = 0
-
-    private let client = OfflineLLMClient()
-    private var task: Task<Void, Never>?
-    private var pendingAssistantID: UUID?
-
-    func start(selection: SelectionCaptureResult) {
-        resetConversation()
-
-        switch selection {
-        case .success(let text, let source):
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else {
-                state = .error("No text selected.")
-                return
-            }
-            selectedText = trimmed
-            captureSource = source
-            sendUserMessage(trimmed)
-        case .empty:
-            state = .idle
-        case .failure:
-            state = .error(selection.userMessage)
-        }
-    }
-
-    func cancel() {
-        task?.cancel()
-        task = nil
-        pendingAssistantID = nil
-    }
-
-    func sendComposerMessage() {
-        let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, state != .translating else { return }
-        composerText = ""
-        sendUserMessage(text, kind: .chat)
-    }
-
-    func requestComposerFocus() {
-        composerFocusRequest &+= 1
-    }
-
-    func retryTranslation() {
-        guard let index = messages.lastIndex(where: { $0.role == .user }) else { return }
-        let message = messages[index]
-        messages = Array(messages.prefix(index))
-        sendUserMessage(message.content, kind: message.kind)
-    }
-
-    func newConversation() {
-        resetConversation()
-        requestComposerFocus()
-    }
-
-    func stopGenerating() {
-        guard state == .translating else { return }
-        task?.cancel()
-        task = nil
-        if let pendingAssistantID,
-           let index = messages.firstIndex(where: { $0.id == pendingAssistantID }),
-           messages[index].content.isEmpty {
-            messages.remove(at: index)
-        }
-        pendingAssistantID = nil
-        state = messages.contains(where: { $0.role == .assistant && !$0.content.isEmpty }) ? .ready : .idle
-    }
-
-    var lastAssistantText: String? {
-        messages.last(where: { $0.role == .assistant && !$0.content.isEmpty })?.content
-    }
-
-    #if DEBUG
-    func loadPreview(selectedText: String, translation: String) {
-        cancel()
-        self.selectedText = selectedText
-        captureSource = .copyFallback
-        messages = [
-            ChatMessage(role: .user, content: selectedText, kind: .selection),
-            ChatMessage(role: .assistant, content: translation, kind: .chat),
-        ]
-        composerText = ""
-        pendingAssistantID = nil
-        state = .ready
-    }
-    #endif
-
-    private func sendUserMessage(_ text: String, kind: ChatMessage.Kind = .selection) {
-        task?.cancel()
-        task = nil
-
-        let message = ChatMessage(role: .user, content: text, kind: kind)
-        messages.append(message)
-        let assistant = ChatMessage(role: .assistant, content: "", kind: .chat)
-        messages.append(assistant)
-        pendingAssistantID = assistant.id
-        state = .translating
-        task = Task { @MainActor [weak self] in
-            await self?.runConversation()
-        }
-    }
-
-    private func resetConversation() {
-        task?.cancel()
-        task = nil
-        state = .idle
-        messages = []
-        composerText = ""
-        selectedText = ""
-        captureSource = nil
-        pendingAssistantID = nil
-    }
-
-    private func runConversation() async {
-        do {
-            let payload = messages.filter { message in
-                !(message.role == .assistant && message.content.isEmpty)
-            }.map { message in
-                let content: String
-                if message.role == .user, message.kind == .selection {
-                    content = """
-                    Translate the selected English text into Simplified Chinese. Preserve code, paths, URLs, commands, Markdown structure, and established technical terms. Return only the translation.
-
-                    Selected text:
-                    \(message.content)
-                    """
-                } else {
-                    content = message.content
-                }
-                return OfflineLLMClient.ChatMessage(
-                    role: message.role == .user ? "user" : "assistant",
-                    content: content,
-                    applyTemplate: false
-                )
-            }
-            let assistantID = pendingAssistantID
-            let translated = try await client.chatStream(
-                messages: payload,
-                profile: .assistant
-            ) { [weak self] delta in
-                self?.appendAssistantDelta(delta, assistantID: assistantID)
-            }
-            if Task.isCancelled {
-                return
-            }
-            finalizeAssistantMessage(translated, assistantID: assistantID)
-            state = .ready
-        } catch {
-            if Task.isCancelled {
-                return
-            }
-            state = .error("本地助手暂时未能完成回复。请确认 Ollama 已启动，再重试。")
-        }
-    }
-
-    private func appendAssistantDelta(_ delta: String, assistantID: UUID?) {
-        guard let assistantID else { return }
-        guard let index = messages.firstIndex(where: { $0.id == assistantID }) else { return }
-        messages[index].content += delta
-    }
-
-    private func finalizeAssistantMessage(_ fullText: String, assistantID: UUID?) {
-        guard let assistantID else { return }
-        guard let index = messages.firstIndex(where: { $0.id == assistantID }) else { return }
-        messages[index].content = fullText
-        pendingAssistantID = nil
-    }
-}
-
 struct SelectionTranslationView: View {
     @ObservedObject var model: SelectionTranslationViewModel
     let onClose: () -> Void
@@ -1451,12 +1282,13 @@ struct SelectionTranslationView: View {
     let onSpeak: (String) -> Void
     @FocusState private var isComposerFocused: Bool
     @State private var copiedText: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private let panelBackground = Color(red: 0.168, green: 0.168, blue: 0.172)
-    private let composerBackground = Color(red: 0.158, green: 0.158, blue: 0.162)
-    private let primaryText = Color.white.opacity(0.88)
-    private let secondaryText = Color.white.opacity(0.54)
-    private let hairline = Color.white.opacity(0.10)
+    private let panelBackground = Color(nsColor: .windowBackgroundColor)
+    private let composerBackground = Color(nsColor: .textBackgroundColor)
+    private let primaryText = Color.primary
+    private let secondaryText = Color.secondary
+    private let hairline = Color.primary.opacity(0.08)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1465,44 +1297,25 @@ struct SelectionTranslationView: View {
             composer
         }
         .frame(
-            minWidth: 560,
-            idealWidth: 620,
+            minWidth: 480,
+            idealWidth: 560,
             maxWidth: .infinity,
-            minHeight: 520,
-            idealHeight: 706,
+            minHeight: 420,
+            idealHeight: 640,
             maxHeight: .infinity
         )
         .background(panelBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(hairline)
-        }
-        .environment(\.colorScheme, .dark)
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "sparkles").foregroundStyle(Color.indigo)
-            Text("本地助手").font(.system(size: 13, weight: .semibold)).foregroundStyle(primaryText)
-            Text("只在这台 Mac 上处理").font(.system(size: 10)).foregroundStyle(secondaryText)
-            Spacer(minLength: 0)
-            if !model.messages.isEmpty {
-                Button("新对话") { model.newConversation() }
-                    .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(secondaryText)
-            }
-
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 30, height: 30)
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(secondaryText)
-            .help("关闭（Esc）")
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 54)
+        HStack {
+            Label("本机处理", systemImage: "lock").font(.system(size: 11)).foregroundStyle(secondaryText)
+            Spacer()
+            Button { model.newConversation() } label: { Label("新对话", systemImage: "square.and.pencil") }
+                .buttonStyle(.borderless).font(.system(size: 11))
+                .disabled(model.messages.isEmpty && model.composerText.isEmpty)
+                .help("开始新对话")
+        }.padding(.horizontal, 20).frame(height: 42)
     }
 
     private var documentBody: some View {
@@ -1511,17 +1324,17 @@ struct SelectionTranslationView: View {
                 LazyVStack(alignment: .leading, spacing: 22) {
                     if model.messages.isEmpty {
                         VStack(alignment: .leading, spacing: 16) {
-                            Text("从一个想法开始。").font(.system(size: 26, weight: .semibold)).foregroundStyle(primaryText)
-                            Text("翻译一段文字，整理一个想法，或者直接提问。")
+                            Text("有什么想法？").font(.system(size: 26, weight: .semibold)).foregroundStyle(primaryText)
+                            Text("翻译、整理，或直接提问。")
                                 .font(.system(size: 13)).foregroundStyle(secondaryText)
                             ForEach(["帮我把这段话改得更简洁：", "翻译成自然英文：", "帮我整理成待办清单："], id: \.self) { suggestion in
                                 Button { model.composerText = suggestion; model.requestComposerFocus() } label: {
                                     HStack { Text(suggestion); Spacer(); Image(systemName: "arrow.up.left") }
                                         .font(.system(size: 13)).padding(14)
-                                        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+                                        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
                                 }.buttonStyle(.plain).foregroundStyle(primaryText)
                             }
-                            Text("⌘ Return 发送 · 按住 Fn 也可以输入")
+                            Text("⌘↩ 发送 · 按住 \(ActivationKeyPreference.load().displayString) 说话")
                                 .font(.system(size: 11)).foregroundStyle(secondaryText)
                         }.padding(.vertical, 28)
                     }
@@ -1534,7 +1347,7 @@ struct SelectionTranslationView: View {
                     }
                 }
                 .padding(.leading, 18)
-                .padding(.trailing, 60)
+                .padding(.trailing, 24)
                 .padding(.top, 25)
                 .padding(.bottom, 30)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1542,7 +1355,7 @@ struct SelectionTranslationView: View {
             .scrollIndicators(.hidden)
             .onChange(of: model.messages) { _ in
                 if let last = model.messages.last?.id {
-                    withAnimation(.easeOut(duration: 0.2)) {
+                    withAnimation(reduceMotion || model.state == .translating ? nil : .easeOut(duration: 0.2)) {
                         proxy.scrollTo(last, anchor: .bottom)
                     }
                 }
@@ -1563,7 +1376,7 @@ struct SelectionTranslationView: View {
                     .textSelection(.enabled)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 11)
-                    .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .id(message.id)
         }
@@ -1571,7 +1384,7 @@ struct SelectionTranslationView: View {
 
     private func assistantDocument(_ message: SelectionTranslationViewModel.ChatMessage) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            if message.content.isEmpty {
+            if message.content.isEmpty && model.state == .translating {
                 HStack(spacing: 9) {
                     ProgressView()
                         .controlSize(.small)
@@ -1581,7 +1394,7 @@ struct SelectionTranslationView: View {
                 }
                 .padding(.vertical, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
+            } else if !message.content.isEmpty {
                 RichMarkdownDocumentView(source: message.content, onCopy: onCopy)
                     .foregroundColor(primaryText)
                 responseActions(for: message.content)
@@ -1614,19 +1427,18 @@ struct SelectionTranslationView: View {
         }
         .buttonStyle(.plain)
         .help(help)
+        .accessibilityLabel(help)
     }
 
     private var composer: some View {
         HStack(alignment: .center, spacing: 10) {
-            TextField("输入问题，或按住 Fn 说话…", text: $model.composerText, axis: .vertical)
+            TextField("输入想法…", text: $model.composerText, axis: .vertical)
                 .font(.system(size: 15))
                 .foregroundColor(primaryText)
                 .textFieldStyle(.plain)
                 .lineLimit(1...4)
                 .focused($isComposerFocused)
-                .onSubmit {
-                    model.sendComposerMessage()
-                }
+                .accessibilityLabel("助手输入框")
 
             if model.state == .translating {
                 Button {
@@ -1637,9 +1449,9 @@ struct SelectionTranslationView: View {
                         .frame(width: 32, height: 32)
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(Color.black.opacity(0.72))
-                .background(Color.white.opacity(0.62), in: Circle())
-                .help("停止生成")
+                .foregroundColor(.primary)
+                .background(Color.primary.opacity(0.08), in: Circle())
+                .help("停止生成").accessibilityLabel("停止生成")
             } else {
                 Button {
                     model.sendComposerMessage()
@@ -1649,11 +1461,11 @@ struct SelectionTranslationView: View {
                         .frame(width: 32, height: 32)
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(canSend ? Color.black.opacity(0.78) : Color.black.opacity(0.58))
-                .background(canSend ? Color.white.opacity(0.90) : Color.white.opacity(0.44), in: Circle())
+                .foregroundColor(canSend ? .white : .secondary)
+                .background(canSend ? Color.accentColor : Color.primary.opacity(0.07), in: Circle())
                 .keyboardShortcut(.return, modifiers: [.command])
                 .disabled(!canSend)
-                .help("发送（⌘ Return）")
+                .help("发送（⌘ Return）").accessibilityLabel("发送")
             }
         }
         .padding(.leading, 18)
@@ -1734,7 +1546,7 @@ private struct RichMarkdownDocumentView: View {
         case .quote(let text):
             HStack(alignment: .top, spacing: 22) {
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.white.opacity(0.22))
+                    .fill(Color.primary.opacity(0.18))
                     .frame(width: 4)
                     .frame(minHeight: 24)
                 inlineMarkdown(text)
@@ -1815,7 +1627,7 @@ private struct CodeDocumentBlock: View {
                     .foregroundColor(.secondary)
                 Spacer()
                 Button(action: onCopy) {
-                    Label("Copy", systemImage: "doc.on.doc")
+                    Label("复制", systemImage: "doc.on.doc")
                         .font(.caption)
                 }
                 .buttonStyle(.plain)
@@ -1823,7 +1635,7 @@ private struct CodeDocumentBlock: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Color.black.opacity(0.22))
+            .background(Color.primary.opacity(0.045))
 
             ScrollView(.horizontal, showsIndicators: true) {
                 Text(content)
@@ -1833,7 +1645,7 @@ private struct CodeDocumentBlock: View {
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(Color.black.opacity(0.12))
+            .background(Color.primary.opacity(0.025))
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
@@ -1844,7 +1656,7 @@ private struct CodeDocumentBlock: View {
 
     private var languageLabel: String {
         let trimmed = language?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? "Plain text" : trimmed
+        return trimmed.isEmpty ? "纯文本" : trimmed
     }
 }
 
@@ -1855,8 +1667,7 @@ final class SelectionTranslationPanelController {
     private let viewModel = SelectionTranslationViewModel()
     private let speechSynthesizer = NSSpeechSynthesizer()
     private var panel: SelectionTranslationPanel?
-    private var eventTap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
+    private var keyMonitor: Any?
 
     private init() {
         createPanel()
@@ -1908,6 +1719,7 @@ final class SelectionTranslationPanelController {
         panel?.hide()
         stopKeyMonitor()
         viewModel.cancel()
+        speechSynthesizer.stopSpeaking()
     }
 
     private func createPanel() {
@@ -1924,6 +1736,7 @@ final class SelectionTranslationPanelController {
             }
         )
         panel = SelectionTranslationPanel(rootView: view)
+        panel?.onClose = { [weak self] in self?.hide() }
     }
 
     private func focusComposer() {
@@ -1951,53 +1764,17 @@ final class SelectionTranslationPanelController {
     }
 
     private func startKeyMonitor() {
-        guard eventTap == nil else { return }
-        let mask = (1 << CGEventType.keyDown.rawValue)
-        let callback: CGEventTapCallBack = { _, type, event, refcon in
-            guard let refcon else { return Unmanaged.passUnretained(event) }
-            let controller = Unmanaged<SelectionTranslationPanelController>.fromOpaque(refcon).takeUnretainedValue()
-            if type != .keyDown {
-                return Unmanaged.passUnretained(event)
-            }
-            return controller.handleEventTap(event)
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, event.window === self.panel, event.keyCode == 53,
+                  (self.panel?.firstResponder as? NSTextView)?.hasMarkedText() != true else { return event }
+            self.hide()
+            return nil
         }
-
-        eventTap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: CGEventMask(mask),
-            callback: callback,
-            userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
-        )
-        guard let eventTap else { return }
-        runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
-        if let runLoopSource {
-            CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-        }
-        CGEvent.tapEnable(tap: eventTap, enable: true)
     }
 
     private func stopKeyMonitor() {
-        if let eventTap {
-            CGEvent.tapEnable(tap: eventTap, enable: false)
-        }
-        if let runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-        }
-        eventTap = nil
-        runLoopSource = nil
-    }
-
-    private func handleEventTap(_ cgEvent: CGEvent) -> Unmanaged<CGEvent>? {
-        guard panel?.isVisible == true else { return Unmanaged.passUnretained(cgEvent) }
-        guard let event = NSEvent(cgEvent: cgEvent) else { return Unmanaged.passUnretained(cgEvent) }
-
-        if event.keyCode == 53 { // Esc
-            hide()
-            return nil
-        }
-
-        return Unmanaged.passUnretained(cgEvent)
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
     }
 }

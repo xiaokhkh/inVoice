@@ -7,398 +7,315 @@ extension Notification.Name {
     static let inVoiceOpenHistory = Notification.Name("inVoiceOpenHistory")
     static let inVoiceSelectHistory = Notification.Name("inVoiceSelectHistory")
     static let inVoiceOpenAssistant = Notification.Name("inVoiceOpenAssistant")
+    static let inVoiceSelectHome = Notification.Name("inVoiceSelectHome")
+    static let inVoiceSelectSettings = Notification.Name("inVoiceSelectSettings")
 }
 
-private enum WorkspacePage: String, CaseIterable, Identifiable {
-    case home, history, dictation, shortcuts, permissions, devices, prompts, general
-    var id: Self { self }
-    var title: String {
-        switch self {
-        case .home: return "概览"
-        case .history: return "历史记录"
-        case .dictation: return "语音输入"
-        case .shortcuts: return "快捷键"
-        case .permissions: return "权限与诊断"
-        case .devices: return "设备"
-        case .prompts: return "本地 AI"
-        case .general: return "通用与隐私"
-        }
-    }
-    var icon: String {
-        switch self {
-        case .home: return "square.grid.2x2"
-        case .history: return "clock.arrow.circlepath"
-        case .dictation: return "waveform"
-        case .shortcuts: return "keyboard"
-        case .permissions: return "checkmark.shield"
-        case .devices: return "hifispeaker"
-        case .prompts: return "sparkles"
-        case .general: return "slider.horizontal.3"
-        }
-    }
+private enum WorkspacePage { case home, history, settings }
+private enum SettingsPage: String, CaseIterable {
+    case general = "设置", dictation = "文字输出", shortcuts = "快捷键"
+    case permissions = "权限与诊断", devices = "设备", prompts = "本地模型"
 }
 
 struct PreferencesView: View {
     @State private var page: WorkspacePage = .home
+    @State private var settingsPage: SettingsPage = .general
     @StateObject private var status = ProductStatus.shared
+    @State private var practiceText = ""
     @State private var recoveryTask: Task<Void, Never>?
     @State private var isRecovering = false
-    @State private var practiceText = ""
 
     var body: some View {
         HStack(spacing: 0) {
             sidebar
             Divider()
             VStack(spacing: 0) {
-                HStack {
-                    Text(page.title).font(.system(size: 13, weight: .semibold))
-                    Spacer()
-                    Label("在这台 Mac 上处理", systemImage: "lock.shield")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 28).frame(height: 48)
-                Divider().opacity(0.5)
+                toolbar
+                Divider().opacity(0.6)
                 content.frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .background(Color(nsColor: .windowBackgroundColor))
+            }.background(Color(nsColor: .windowBackgroundColor))
         }
-        .tint(.indigo)
         .frame(minWidth: 860, minHeight: 620)
         .task { await status.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: .inVoiceSelectHome)) { _ in page = .home }
         .onReceive(NotificationCenter.default.publisher(for: .inVoiceSelectHistory)) { _ in page = .history }
-        .onReceive(NotificationCenter.default.publisher(for: .inVoiceOpenDiagnostics)) { _ in
-            page = .permissions
-        }
+        .onReceive(NotificationCenter.default.publisher(for: .inVoiceSelectSettings)) { _ in openSettings() }
+        .onReceive(NotificationCenter.default.publisher(for: .inVoiceOpenDiagnostics)) { _ in openSettings(.permissions) }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await status.refresh() }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { notification in
-            if (notification.object as? NSWindow)?.identifier?.rawValue == "inVoiceWorkspace" {
-                recoveryTask?.cancel()
-            }
+            if (notification.object as? NSWindow)?.identifier?.rawValue == "inVoiceWorkspace" { recoveryTask?.cancel() }
         }
+    }
+
+    private func openSettings(_ destination: SettingsPage = .general) {
+        settingsPage = destination
+        page = .settings
     }
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 35, height: 35)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("inVoice").font(.system(size: 20, weight: .semibold, design: .rounded))
-                    Text("把想法，说成文字").font(.system(size: 10)).foregroundStyle(.secondary)
-                }
-            }.padding(.horizontal, 20).padding(.top, 23).padding(.bottom, 30)
-
-            navRow(.home)
-            navRow(.history)
-            Text("偏好设置").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-                .padding(.leading, 24).padding(.top, 26).padding(.bottom, 8)
-            ForEach(Array(WorkspacePage.allCases.dropFirst(2))) { navRow($0) }
-            Spacer(minLength: 20)
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 7) {
-                    Circle().fill(status.canDictate ? Color.green : Color.orange).frame(width: 6, height: 6)
-                    Text(status.canDictate ? status.phase : (status.isStarting ? "服务启动中…" : "查看运行状态")).font(.system(size: 11, weight: .medium))
-                }
-                Text("按住 \(ActivationKeyPreference.load().displayString) · 自然说话")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-            }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
-                .padding(14)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 9) {
+                Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 28, height: 28)
+                Text("inVoice").font(.system(size: 17, weight: .semibold))
+            }.padding(.horizontal, 18).padding(.top, 23).padding(.bottom, 27)
+            navigationRow("听写", icon: "waveform", selected: page == .home) { page = .home }
+                .help("听写 · ⌘1")
+            navigationRow("剪贴板", icon: "doc.on.clipboard", selected: page == .history) { page = .history }
+                .help("剪贴板 · ⌘2")
+            navigationRow("助手", icon: "sparkles", selected: false, opensWindow: true) {
+                NotificationCenter.default.post(name: .inVoiceOpenAssistant, object: nil)
+            }.help("助手 · ⌘3")
+            Spacer()
+            navigationRow("设置", icon: "gearshape", selected: page == .settings) { openSettings() }
+                .padding(.bottom, 16)
         }
-        .frame(width: 190)
-        .background(.regularMaterial)
+        .frame(width: 174).background(.regularMaterial)
     }
 
-    private func navRow(_ item: WorkspacePage) -> some View {
-        Button { page = item } label: {
+    private func navigationRow(_ title: String, icon: String, selected: Bool,
+                               opensWindow: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             HStack(spacing: 10) {
-                Image(systemName: item.icon).font(.system(size: 14)).frame(width: 20)
-                Text(item.title).font(.system(size: 13, weight: page == item ? .semibold : .regular))
-                Spacer()
+                Image(systemName: icon).font(.system(size: 15)).frame(width: 20)
+                Text(title).font(.system(size: 13, weight: selected ? .semibold : .regular))
+                Spacer(minLength: 4)
+                if opensWindow { Image(systemName: "arrow.up.right").font(.system(size: 9)).foregroundStyle(.tertiary) }
             }
-            .foregroundStyle(page == item ? Color.indigo : Color.primary.opacity(0.75))
-            .padding(.horizontal, 12).frame(height: 38)
-            .background(page == item ? Color.indigo.opacity(0.11) : .clear,
-                        in: RoundedRectangle(cornerRadius: 8))
+            .foregroundStyle(selected ? Color.accentColor : Color.primary)
+            .padding(.horizontal, 11).frame(height: 36)
+            .background(selected ? Color.accentColor.opacity(0.10) : .clear, in: RoundedRectangle(cornerRadius: 7))
             .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 2)
-        .accessibilityValue(page == item ? "当前页面" : "")
+        }.buttonStyle(.plain).padding(.horizontal, 10)
+            .accessibilityValue(selected ? "当前页面" : (opensWindow ? "在独立窗口打开" : ""))
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: 10) {
+            if page == .settings && settingsPage != .general {
+                Button { settingsPage = .general } label: { Image(systemName: "chevron.left") }
+                    .buttonStyle(.plain).help("返回设置").accessibilityLabel("返回设置")
+            }
+            Text(page == .home ? "听写" : (page == .history ? "剪贴板" : settingsPage.rawValue))
+                .font(.system(size: 13, weight: .semibold))
+            Spacer()
+            if page == .history {
+                Button { ClipboardHistoryPanelController.shared.show() } label: {
+                    Label("快捷面板", systemImage: "rectangle.on.rectangle")
+                }.buttonStyle(.borderless).font(.system(size: 11))
+                    .help("在其他应用使用 \(HotKeyPreference.load().displayString) 快速粘贴")
+            } else if page == .home {
+                Button { openSettings(.permissions) } label: {
+                    HStack(spacing: 6) {
+                        if status.isStarting && !status.canDictate { ProgressView().controlSize(.mini) }
+                        else { Circle().fill(status.canDictate ? Color.green : .orange).frame(width: 6, height: 6) }
+                        Text(status.canDictate ? "准备就绪" : (status.isStarting ? "正在准备…" : "完成设置"))
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                }.buttonStyle(.plain).help("查看权限与运行状态")
+            }
+        }.padding(.horizontal, 24).frame(height: 46)
     }
 
     @ViewBuilder private var content: some View {
         switch page {
         case .home:
-            HomeWorkspaceView(status: status, practiceText: $practiceText,
-                              onSettings: { page = .dictation }, onHistory: { page = .history },
-                              onSetup: { page = .permissions })
+            HomeWorkspaceView(practiceText: $practiceText)
         case .history: HistoryWorkspaceView()
-        case .dictation: DictationSettingsView()
-        case .shortcuts: HotKeySettingsView()
-        case .permissions:
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    PreferencesHeader(title: "每一步，都有状态", subtitle: "授权、服务和模型的真实状态。遇到问题时，从这里恢复。")
-                    runtimeCard
-                    PermissionsPanelView()
-                }.padding(28)
+        case .settings:
+            switch settingsPage {
+            case .general: SettingsOverviewView(onOpen: { settingsPage = $0 })
+            case .dictation: DictationSettingsView()
+            case .shortcuts: HotKeySettingsView()
+            case .devices: DeviceCenterView()
+            case .prompts: PromptSettingsView()
+            case .permissions:
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        PermissionsPanelView()
+                        DisclosureGroup("服务与性能") {
+                            runtimeCard.padding(.top, 12)
+                        }.font(.system(size: 13, weight: .medium))
+                    }.padding(28)
+                }
             }
-        case .devices: DeviceCenterView()
-        case .prompts: PromptSettingsView()
-        case .general: GeneralWorkspaceView()
         }
     }
 
     private var runtimeCard: some View {
-        SectionCard(title: "本地服务", subtitle: "实时检查运行情况；模型文件存在并不代表服务已就绪。") {
-            ServiceStatusLine(title: "语音识别", detail: "决定最终文字是否可用", availability: status.finalASR)
-            ServiceStatusLine(title: "实时预览", detail: "边说边显示文字", availability: status.streamingASR)
-            ServiceStatusLine(title: "文字整理与助手", detail: "不可用时，听写仍会保留原文", availability: status.languageModel)
+        SectionCard(title: "本机服务", subtitle: "异常时可尝试恢复，听写记录不受影响。") {
+            ServiceStatusLine(title: "语音识别", availability: status.finalASR)
+            ServiceStatusLine(title: "实时预览", availability: status.streamingASR)
+            ServiceStatusLine(title: "文字整理与助手", availability: status.languageModel)
             Divider()
             HStack {
-                Button(isRecovering ? "正在恢复…" : "恢复语音服务") {
+                Text("最近完成 \(status.summary.completedCount) 次听写").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if let ms = status.summary.medianResponseMs {
+                    Text(String(format: "典型等待 %.1f 秒", Double(ms) / 1_000)).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            HStack {
+                Button(isRecovering ? "正在恢复…" : "恢复服务") {
                     isRecovering = true
-                    recoveryTask = Task {
-                        await status.recover()
-                        isRecovering = false
-                    }
+                    recoveryTask = Task { await status.recover(); isRecovering = false }
                 }.disabled(isRecovering)
                 Button("重新检查") { Task { await status.refresh() } }.disabled(status.isRefreshing)
-                Spacer()
-                if let checkedAt = status.checkedAt {
-                    Text(checkedAt, style: .time).font(.caption).foregroundStyle(.secondary)
-                }
             }
         }
     }
 }
 
 private struct HomeWorkspaceView: View {
-    @ObservedObject var status: ProductStatus
     @Binding var practiceText: String
-    let onSettings: () -> Void
-    let onHistory: () -> Void
-    let onSetup: () -> Void
     @FocusState private var practiceFocused: Bool
     @State private var didCopy = false
+    @State private var copyResetTask: Task<Void, Never>?
+    @State private var activationKey = ActivationKeyPreference.load().displayString
     @AppStorage(DictationPostProcessMode.defaultsKey) private var mode = DictationPostProcessMode.defaultValue.rawValue
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text("让表达，自然发生。").font(.system(size: 29, weight: .semibold))
-                        Text("在任何输入框，把想法变成文字。").font(.system(size: 13)).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button(action: onSetup) {
-                        Label(status.canDictate ? "可以开始听写" : (status.isStarting ? "服务启动中…" : "需要完成设置"),
-                              systemImage: status.canDictate ? "checkmark.circle.fill" : "exclamationmark.circle")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(status.canDictate ? Color.green : Color.orange)
-                            .padding(.horizontal, 12).padding(.vertical, 8)
-                            .background((status.canDictate ? Color.green : Color.orange).opacity(0.08), in: Capsule())
-                    }.buttonStyle(.plain)
+            VStack(alignment: .leading, spacing: 30) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Image(systemName: "waveform").font(.system(size: 28, weight: .medium))
+                        .foregroundStyle(Color.accentColor).padding(.bottom, 8)
+                    Text("把想法，说出来。").font(.system(size: 30, weight: .semibold))
+                    Text("按住 \(activationKey) 说话，松开即输入。")
+                        .font(.system(size: 15)).foregroundStyle(.secondary)
                 }
-                hero
-                HStack(spacing: 14) {
-                    metric(value: "\(status.summary.completedCount)", title: "最近完成的听写", icon: "checkmark.bubble")
-                    metric(value: responseTime, title: "松开后的典型等待", icon: "timer")
-                    metric(value: "本机", title: "音频与文字处理", icon: "lock.shield")
-                }
-                practice
-                HStack(spacing: 14) {
-                    quickAction(title: "历史记录", detail: "找回听写，复用剪贴板", icon: "clock.arrow.circlepath", action: onHistory)
-                    quickAction(title: "本地助手", detail: "翻译、改写，或聊聊想法", icon: "sparkles") {
-                        NotificationCenter.default.post(name: .inVoiceOpenAssistant, object: nil)
-                    }
-                }
-                HStack(spacing: 6) {
-                    Image(systemName: "info.circle")
-                    Text("切换到其他应用时，结果会保留在剪贴板，供你手动粘贴。")
-                }.font(.system(size: 11)).foregroundStyle(.secondary)
-            }.padding(28)
-        }
-    }
-
-    private var hero: some View {
-        HStack(spacing: 24) {
-            VStack(alignment: .leading, spacing: 20) {
-                HStack(spacing: 7) {
-                    Text("你的语音工作流").font(.system(size: 11, weight: .medium))
-                    Spacer()
-                }.foregroundStyle(.indigo)
-                HStack(alignment: .center, spacing: 13) {
-                    Text(ActivationKeyPreference.load().displayString)
-                        .font(.system(size: 25, weight: .medium, design: .rounded))
-                        .padding(.horizontal, 15).frame(height: 53)
-                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 11))
-                        .overlay(RoundedRectangle(cornerRadius: 11).stroke(Color.indigo.opacity(0.13)))
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("按住说话，松开即输入").font(.system(size: 19, weight: .semibold))
-                        Text("邮件、聊天、文档、代码编辑器，随处可用。")
-                            .font(.system(size: 12)).foregroundStyle(.secondary)
-                    }
-                }
-                HStack(spacing: 8) {
-                    Text("输出方式").font(.system(size: 12)).foregroundStyle(.secondary)
-                    Picker("输出方式", selection: $mode) {
-                        ForEach(DictationPostProcessMode.allCases, id: \.rawValue) { mode in
-                            Text(mode.displayTitle).tag(mode.rawValue)
+                VStack(spacing: 0) {
+                    ZStack(alignment: .topLeading) {
+                        TextEditor(text: $practiceText).font(.system(size: 17)).lineSpacing(6)
+                            .scrollContentBackground(.hidden).padding(16).focused($practiceFocused)
+                            .accessibilityLabel("听写体验区")
+                        if practiceText.isEmpty {
+                            Text(practiceFocused ? "按住 \(activationKey)，试着说一句…" : "点这里，试着说一句…")
+                                .font(.system(size: 17)).foregroundStyle(.tertiary)
+                                .padding(.horizontal, 21).padding(.top, 24).allowsHitTesting(false)
                         }
-                    }.labelsHidden().frame(width: 150)
-                    Spacer()
-                    Button("调整偏好", action: onSettings).buttonStyle(.link).font(.system(size: 12))
+                    }.frame(height: 190)
+                    Divider().padding(.horizontal, 18)
+                    HStack(spacing: 9) {
+                        Text(activationKey).font(.system(size: 12, weight: .medium))
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 5))
+                        Text("按住说话").font(.system(size: 11)).foregroundStyle(.secondary)
+                        Spacer()
+                        if !practiceText.isEmpty {
+                            Button { copyPractice() } label: { Label(didCopy ? "已复制" : "复制", systemImage: didCopy ? "checkmark" : "doc.on.doc") }
+                                .controlSize(.small).help("复制体验区的全部内容")
+                        }
+                        Menu {
+                            Picker("文字输出", selection: $mode) {
+                                ForEach(DictationPostProcessMode.allCases, id: \.rawValue) { Text($0.displayTitle).tag($0.rawValue) }
+                            }
+                        } label: {
+                            Text((DictationPostProcessMode(rawValue: mode) ?? .defaultValue).displayTitle)
+                        }.menuStyle(.borderlessButton).fixedSize().font(.system(size: 12))
+                            .help("更改下一次听写的输出方式")
+                    }.padding(16)
                 }
-            }
-        }
-        .padding(24)
-        .background(LinearGradient(colors: [Color.indigo.opacity(0.10), Color.purple.opacity(0.04)],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing),
-                    in: RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.indigo.opacity(0.08)))
-    }
-
-    private var practice: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("在这里，试着说一句").font(.system(size: 15, weight: .semibold))
-                    Text("点击下方，按住 \(ActivationKeyPreference.load().displayString) 说话，松开后文字会出现在这里。")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if !practiceText.isEmpty {
-                    Button(didCopy ? "已复制" : "复制") {
-                        ClipboardObserver.shared.markInternalWrite()
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(practiceText, forType: .string)
-                        didCopy = true
-                    }.controlSize(.small)
-                }
-            }
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $practiceText)
-                    .font(.system(size: 14)).scrollContentBackground(.hidden)
-                    .padding(10).focused($practiceFocused)
-                    .accessibilityLabel("语音练习区")
-                if practiceText.isEmpty && !practiceFocused {
-                    Text("例如：帮我记一下，周五前完成产品体验的优化。")
-                        .font(.system(size: 13)).foregroundStyle(.tertiary)
-                        .padding(15).allowsHitTesting(false)
-                }
-            }
-            .frame(height: 88)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10)
-                .stroke(practiceFocused ? Color.indigo.opacity(0.65) : Color.primary.opacity(0.10), lineWidth: 1))
-            Text("练习内容仅保留在当前窗口；成功的听写也可在历史记录中找回。")
-                .font(.system(size: 10)).foregroundStyle(.secondary)
+                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(practiceFocused ? Color.accentColor.opacity(0.45) : Color.primary.opacity(0.08)))
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: "lock").font(.system(size: 11))
+                    Text("在这台 Mac 上处理。\n邮件、聊天和文档里，也同样好用。")
+                        .font(.system(size: 12)).lineSpacing(5)
+                }.foregroundStyle(.secondary)
+            }.frame(maxWidth: 590, alignment: .leading).padding(.horizontal, 36).padding(.vertical, 42)
+                .frame(maxWidth: .infinity)
         }
         .onChange(of: practiceText) { _ in didCopy = false }
-    }
-
-    private var responseTime: String {
-        guard let ms = status.summary.medianResponseMs else { return "—" }
-        return String(format: "%.1f 秒", Double(ms) / 1_000)
-    }
-
-    private func metric(value: String, title: String, icon: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(value).font(.system(size: 23, weight: .semibold, design: .rounded))
-                Spacer()
-                Image(systemName: icon).font(.system(size: 17)).foregroundStyle(.tertiary)
-            }
-            Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+            activationKey = ActivationKeyPreference.load().displayString
         }
-        .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
-        .help("基于最近 14 天日志末尾最多 512 KB 的已完成会话；没有记录时显示 —。")
+        .onDisappear { copyResetTask?.cancel() }
     }
 
-    private func quickAction(title: String, detail: String, icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: icon).font(.system(size: 18)).foregroundStyle(.indigo)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(.primary)
-                    Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Image(systemName: "arrow.up.right").font(.system(size: 11)).foregroundStyle(.tertiary)
-            }.padding(16).background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
-                .contentShape(Rectangle())
-        }.buttonStyle(.plain)
+    private func copyPractice() {
+        ClipboardObserver.shared.markInternalWrite()
+        NSPasteboard.general.clearContents()
+        didCopy = NSPasteboard.general.setString(practiceText, forType: .string)
+        copyResetTask?.cancel()
+        copyResetTask = Task {
+            do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { return }
+            didCopy = false
+        }
     }
 }
 
 private struct ServiceStatusLine: View {
     let title: String
-    let detail: String
     let availability: ProductStatus.Availability
     var body: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 13, weight: .medium))
-                Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
-            }
+            Text(title).font(.system(size: 13))
             Spacer()
             Label(availability.title, systemImage: availability == .ready ? "checkmark.circle.fill" : "circle.dotted")
-                .font(.system(size: 12)).foregroundStyle(availability == .ready ? Color.green : Color.orange)
+                .font(.system(size: 12)).foregroundStyle(availability == .ready ? Color.green : .orange)
         }.padding(.vertical, 3)
     }
 }
 
-private struct GeneralWorkspaceView: View {
+private struct SettingsOverviewView: View {
+    let onOpen: (SettingsPage) -> Void
     @AppStorage(ClipboardCapturePolicy.enabledKey) private var captureClipboard = true
+    @AppStorage(DictationPostProcessMode.defaultsKey) private var mode = DictationPostProcessMode.defaultValue.rawValue
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var loginMessage: String?
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                PreferencesHeader(title: "融入你的 Mac", subtitle: "启动方式与数据边界，由你掌控。设置即时生效。")
-                SectionCard(title: "日常使用", subtitle: "关闭主窗口后，inVoice 仍在菜单栏待命。") {
-                    Toggle("登录 Mac 时启动 inVoice", isOn: Binding(
-                        get: { launchAtLogin },
-                        set: { value in
-                            do {
-                                if value { try SMAppService.mainApp.register() }
-                                else { try SMAppService.mainApp.unregister() }
-                                loginMessage = SMAppService.mainApp.status == .requiresApproval
-                                    ? "请在系统设置的「登录项」中允许 inVoice。" : nil
-                            } catch {
-                                loginMessage = "未能更新登录项：\(error.localizedDescription)"
-                            }
-                            let status = SMAppService.mainApp.status
-                            launchAtLogin = status == .enabled || status == .requiresApproval
-                        }
-                    ))
+            VStack(alignment: .leading, spacing: 24) {
+                SectionCard(title: "日常使用", subtitle: "按你的习惯，随时调整。") {
+                    settingsLink(.dictation, symbol: "text.bubble", detail: (DictationPostProcessMode(rawValue: mode) ?? .defaultValue).displayTitle)
+                    Divider()
+                    settingsLink(.shortcuts, symbol: "keyboard", detail: ActivationKeyPreference.load().displayString)
+                    Divider()
+                    Toggle("登录时启动", isOn: Binding(get: { launchAtLogin }, set: setLaunchAtLogin))
+                        .toggleStyle(.switch).controlSize(.small)
                     if let loginMessage { Text(loginMessage).font(.caption).foregroundStyle(.orange) }
-                    Text("打开主窗口：⌘⌥P；在菜单栏选择「退出 inVoice」可完全退出。")
-                        .font(.caption).foregroundStyle(.secondary)
                 }
-                SectionCard(title: "剪贴板隐私", subtitle: "记录保存在这台 Mac，不同步到云端。") {
-                    Toggle("保存系统剪贴板历史", isOn: $captureClipboard)
-                    Text("关闭后停止收集新的系统剪贴板内容，已有记录和主动听写的结果仍可使用。标记为密码、临时或隐藏的剪贴板内容不会收集。")
+                SectionCard(title: "隐私", subtitle: "语音和文字在本机处理。") {
+                    Toggle("保存剪贴板历史", isOn: $captureClipboard).toggleStyle(.switch).controlSize(.small)
+                    Text("暂停后保留已有记录；主动听写仍会保存。跳过应用标记为敏感或临时的内容。")
                         .font(.caption).foregroundStyle(.secondary)
-                    Label("复制图片网址时，只保存网址，不会在后台访问链接。", systemImage: "network.badge.shield.half.filled")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Divider()
+                    settingsLink(.permissions, symbol: "hand.raised", detail: "")
                 }
-                SectionCard(title: "关于 inVoice", subtitle: "本地优先的 Mac 语音工作台") {
-                    HStack {
-                        Text("版本 \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0")")
-                        Spacer()
-                        Button("在 Finder 中显示应用") {
-                            NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
-                        }
-                    }
-                    Text("语音识别、文字整理与助手在本机运行。麦克风只在你发起录音时使用；性能日志不包含音频和正文。")
-                        .font(.caption).foregroundStyle(.secondary)
+                SectionCard(title: "更多", subtitle: "连接设备或调整本地模型。") {
+                    settingsLink(.devices, symbol: "hifispeaker", detail: "")
+                    Divider()
+                    settingsLink(.prompts, symbol: "cpu", detail: "")
                 }
-            }.padding(28)
+                HStack {
+                    Text("inVoice \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")")
+                    Spacer()
+                    Text("关闭窗口后，仍可从菜单栏使用。")
+                }.font(.system(size: 11)).foregroundStyle(.secondary)
+            }.frame(maxWidth: 640).padding(28).frame(maxWidth: .infinity)
         }
+    }
+
+    private func settingsLink(_ destination: SettingsPage, symbol: String, detail: String) -> some View {
+        Button { onOpen(destination) } label: {
+            HStack(spacing: 11) {
+                Image(systemName: symbol).frame(width: 20).foregroundStyle(.secondary)
+                Text(destination.rawValue).foregroundStyle(.primary)
+                Spacer()
+                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+            }.font(.system(size: 13)).padding(.vertical, 5).contentShape(Rectangle())
+        }.buttonStyle(.plain)
+    }
+
+    private func setLaunchAtLogin(_ value: Bool) {
+        do {
+            if value { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+            loginMessage = SMAppService.mainApp.status == .requiresApproval ? "请在系统设置的登录项中允许 inVoice。" : nil
+        } catch { loginMessage = "未能更新登录项，请稍后重试。" }
+        launchAtLogin = [.enabled, .requiresApproval].contains(SMAppService.mainApp.status)
     }
 }

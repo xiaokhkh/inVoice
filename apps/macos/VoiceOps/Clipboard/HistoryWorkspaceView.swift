@@ -14,15 +14,6 @@ struct HistoryWorkspaceView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top) {
-                PreferencesHeader(title: "复制过的，随时找回", subtitle: "文字、图片与语音输入，都在这里。固定常用内容，下次更快找到。")
-                Spacer(minLength: 10)
-                Button { captureClipboard.toggle() } label: {
-                    Label(captureClipboard ? "正在收集" : "已暂停", systemImage: captureClipboard ? "pause.circle" : "play.circle")
-                        .font(.system(size: 11))
-                }
-                .help(captureClipboard ? "暂停保存系统剪贴板；语音记录仍会保留" : "恢复保存新复制的文字与图片")
-            }
             HStack(spacing: 9) {
                 Button { searchFocused = true } label: { Image(systemName: "magnifyingglass") }
                     .buttonStyle(.plain).foregroundStyle(.secondary).keyboardShortcut("f")
@@ -46,10 +37,19 @@ struct HistoryWorkspaceView: View {
                 }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 385)
                 Spacer(minLength: 8)
                 Menu {
+                    Button(captureClipboard ? "暂停收集" : "恢复收集") { captureClipboard.toggle() }
+                    Divider()
                     Button("清理未固定记录…", role: .destructive) { showClearConfirmation = true }
                         .disabled(model.counts.total == model.counts.pinned || model.isBusy)
-                } label: { Label("管理", systemImage: "ellipsis.circle") }
+                } label: { Label("更多", systemImage: "ellipsis.circle") }
                 .menuStyle(.borderlessButton).fixedSize()
+            }
+            if !captureClipboard {
+                HStack {
+                    Label("已暂停收集", systemImage: "pause.circle").foregroundStyle(.secondary)
+                    Spacer()
+                    Button("恢复") { captureClipboard = true }.buttonStyle(.link)
+                }.font(.system(size: 11))
             }
             Group {
                 if model.items.isEmpty { emptyState }
@@ -85,13 +85,13 @@ struct HistoryWorkspaceView: View {
                     HStack(alignment: .top, spacing: 10) {
                         Group {
                             if item.type == .image { ClipboardImageView(item: item) }
-                            else { Image(systemName: item.symbol).foregroundStyle(.indigo) }
+                            else { Image(systemName: item.symbol).foregroundStyle(Color.accentColor) }
                         }.frame(width: 28, height: 28)
                         VStack(alignment: .leading, spacing: 6) {
                             Text(item.displayTitle).lineLimit(2).font(.system(size: 12, weight: .medium)).foregroundStyle(.primary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             HStack(spacing: 4) {
-                                if item.pinned { Image(systemName: "pin.fill").foregroundStyle(.indigo) }
+                                if item.pinned { Image(systemName: "pin.fill").foregroundStyle(Color.accentColor) }
                                 Text(model.metaText(for: item)).lineLimit(1)
                             }.font(.system(size: 10)).foregroundStyle(.secondary)
                         }
@@ -121,7 +121,7 @@ struct HistoryWorkspaceView: View {
                     .font(.system(size: 12, weight: .semibold))
                 Spacer()
                 Button { model.togglePinned(item) } label: { Image(systemName: item.pinned ? "pin.fill" : "pin") }
-                    .buttonStyle(.plain).foregroundStyle(item.pinned ? .indigo : .secondary)
+                    .buttonStyle(.plain).foregroundStyle(item.pinned ? Color.accentColor : Color.secondary)
                     .help(item.pinned ? "取消固定" : "固定记录，清理时保留")
                     .accessibilityLabel(item.pinned ? "取消固定" : "固定记录")
             }.padding(16)
@@ -192,7 +192,7 @@ struct HistoryWorkspaceView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Text(model.message ?? "\(model.items.count) 条记录 · 已固定 \(model.counts.pinned) 条")
-                    .font(.system(size: 11)).foregroundStyle(model.message == nil ? Color.secondary : .indigo)
+                    .font(.system(size: 11)).foregroundStyle(model.message == nil ? Color.secondary : Color.accentColor)
                     .lineLimit(2)
                 Spacer(minLength: 4)
                 if model.counts.undoable > 0 {
@@ -200,7 +200,8 @@ struct HistoryWorkspaceView: View {
                         .controlSize(.small).disabled(model.isBusy || model.isSearching).help("可撤销上一次删除或清理，直到下一次删除")
                 }
             }.frame(minHeight: 24)
-            Label("仅保存在本机 · 保留最近 200 条，固定内容额外保留\(captureClipboard ? "" : " · 系统剪贴板收集已暂停")", systemImage: "lock")
+            Label("仅保存在本机", systemImage: "lock")
+                .help("保留最近 200 条记录，固定内容额外保留。可在右上角暂停收集。")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
         }
     }

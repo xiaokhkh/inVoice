@@ -56,21 +56,23 @@ final class OverlayPanel: NSPanel {
     }
 }
 
-final class SelectionTranslationPanel: NSPanel {
+final class SelectionTranslationPanel: NSPanel, NSWindowDelegate {
+    var onClose: (() -> Void)?
     private var didPositionInitialFrame = false
 
     init(rootView: some View) {
         let hosting = NSHostingView(rootView: rootView)
-        let rect = NSRect(x: 0, y: 0, width: 620, height: 706)
+        let rect = NSRect(x: 0, y: 0, width: 560, height: 640)
         super.init(
             contentRect: rect,
-            styleMask: [.borderless, .resizable],
+            styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
 
-        titleVisibility = .hidden
-        titlebarAppearsTransparent = true
+        title = "助手"
+        titleVisibility = .visible
+        titlebarAppearsTransparent = false
         titlebarSeparatorStyle = .none
         isReleasedWhenClosed = false
         isFloatingPanel = true
@@ -81,14 +83,11 @@ final class SelectionTranslationPanel: NSPanel {
         hasShadow = true
         hidesOnDeactivate = false
         isMovableByWindowBackground = true
-        minSize = NSSize(width: 560, height: 520)
+        minSize = NSSize(width: 480, height: 420)
         maxSize = NSSize(width: 920, height: 1000)
         animationBehavior = .utilityWindow
-        appearance = NSAppearance(named: .darkAqua)
+        delegate = self
 
-        standardWindowButton(.closeButton)?.isHidden = true
-        standardWindowButton(.miniaturizeButton)?.isHidden = true
-        standardWindowButton(.zoomButton)?.isHidden = true
 
         contentView = hosting
     }
@@ -103,6 +102,11 @@ final class SelectionTranslationPanel: NSPanel {
         }
         NSApp.activate(ignoringOtherApps: true)
         makeKeyAndOrderFront(nil)
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        onClose?()
+        return false
     }
 
     func hide() {

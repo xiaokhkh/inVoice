@@ -22,10 +22,11 @@ struct PromptSettingsView: View {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Text("本地 AI")
+                        Text("本地模型")
                             .font(.title2.weight(.semibold))
                         Spacer()
-                        Button("恢复全部默认提示词") { confirmReset = true }
+                        Menu { Button("恢复全部默认提示词…") { confirmReset = true } } label: { Image(systemName: "ellipsis.circle") }
+                        .help("更多选项").accessibilityLabel("更多模型选项")
                         .confirmationDialog("恢复全部默认提示词？自定义内容将被替换。", isPresented: $confirmReset) {
                             Button("恢复默认", role: .destructive) {
                             translationSystemPrompt = OfflineLLMClient.defaultTranslationSystemPrompt
@@ -41,7 +42,7 @@ struct PromptSettingsView: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                     }
-                    Text("选择文字处理模型；展开下方选项可定制翻译、润色与摘要的风格。")
+                    Text("选择用于整理文字和对话的模型。更多选项按需展开。")
                         .font(.callout)
                         .foregroundColor(.secondary)
                 }
@@ -208,10 +209,10 @@ struct PromptSettingsView: View {
                 details.append(quantization)
             }
             if let storageBytes = status.storageBytes {
-                details.append("disk \(formattedBytes(storageBytes))")
+                details.append("磁盘 \(formattedBytes(storageBytes))")
             }
             if let memoryBytes = status.memoryBytes {
-                details.append("GPU memory \(formattedBytes(memoryBytes))")
+                details.append("显存 \(formattedBytes(memoryBytes))")
             }
             modelDetailsText = details.joined(separator: " · ")
         } catch {

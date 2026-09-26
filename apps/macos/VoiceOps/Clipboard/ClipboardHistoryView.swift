@@ -13,7 +13,7 @@ struct ClipboardHistoryView: View {
         VStack(spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("剪贴板历史").font(.system(size: 16, weight: .semibold))
+                    Text("剪贴板").font(.system(size: 16, weight: .semibold))
                     Text(captureClipboard ? "选中记录，回车粘贴到原应用" : "收集已暂停 · 已有记录仍可使用")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
@@ -80,7 +80,7 @@ struct ClipboardHistoryView: View {
         }
         .padding(18).frame(width: 600, height: 490)
         .background(Color(nsColor: .windowBackgroundColor))
-        .tint(.indigo)
+        .tint(.accentColor)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .onAppear { searchFocused = true }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
