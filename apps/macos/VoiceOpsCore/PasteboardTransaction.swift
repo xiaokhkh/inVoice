@@ -111,6 +111,20 @@ final class PasteboardTransaction {
         return writeText(text, internalWriteDuration: 0.75)
     }
 
+    /// Copies an image without restoration, using the same pasteboard and delivery ownership as text.
+    func prepareImageForPaste(_ data: Data) -> PreparedPaste? {
+        guard !data.isEmpty else { return nil }
+        abandonRestoreKeepingCurrentClipboard()
+        markInternalWrite(1.0)
+        pasteboard.clearContents()
+        guard pasteboard.setData(data, forType: .png) else { return nil }
+        return PreparedPaste(expectedChangeCount: pasteboard.changeCount)
+    }
+
+    func isUnchanged(since prepared: PreparedPaste) -> Bool {
+        pasteboard.changeCount == prepared.expectedChangeCount
+    }
+
     func scheduleRestore(after prepared: PreparedPaste) {
         guard hasBackup else { return }
 

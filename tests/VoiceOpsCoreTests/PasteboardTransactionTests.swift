@@ -85,6 +85,29 @@ final class PasteboardTransactionTests: XCTestCase {
         XCTAssertEqual(pasteboard.string(forType: .string), "manual fallback")
     }
 
+    func testImageCopyCancelsTextRestoreAndKeepsSingleRepresentation() async throws {
+        pasteboard.setString("original", forType: .string)
+        let transaction = PasteboardTransaction(pasteboard: pasteboard, restoreDelay: 0.01)
+        let text = try XCTUnwrap(transaction.prepareTextForPaste("transcript"))
+        transaction.scheduleRestore(after: text)
+        let data = Data([137, 80, 78, 71])
+        let image = try XCTUnwrap(transaction.prepareImageForPaste(data))
+        try await Task.sleep(nanoseconds: 40_000_000)
+        XCTAssertEqual(pasteboard.data(forType: .png), data)
+        XCTAssertNil(pasteboard.string(forType: .string))
+        XCTAssertTrue(transaction.isUnchanged(since: image))
+    }
+
+    func testImageDeliveryDetectsNewerClipboardAndRejectsEmptyData() throws {
+        let transaction = PasteboardTransaction(pasteboard: pasteboard)
+        let image = try XCTUnwrap(transaction.prepareImageForPaste(Data([1, 2, 3])))
+        pasteboard.clearContents()
+        pasteboard.setString("newer user copy", forType: .string)
+        XCTAssertFalse(transaction.isUnchanged(since: image))
+        XCTAssertNil(transaction.prepareImageForPaste(Data()))
+        XCTAssertEqual(pasteboard.string(forType: .string), "newer user copy")
+    }
+
     func testDeliverySlotSerializesPrePasteOperations() async {
         let transaction = PasteboardTransaction(
             pasteboard: pasteboard,

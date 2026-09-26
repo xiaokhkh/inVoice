@@ -5,185 +5,93 @@ struct ClipboardHistoryView: View {
     @ObservedObject var viewModel: ClipboardHistoryViewModel
     let onInject: (ClipboardItem) -> Void
     let onHoverImage: (ClipboardItem?) -> Void
+    let onManage: () -> Void
+    @FocusState private var searchFocused: Bool
+    @AppStorage(ClipboardCapturePolicy.enabledKey) private var captureClipboard = true
 
     var body: some View {
-        ZStack {
-            VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                )
-            VStack(spacing: 12) {
-                header
-                searchBar
-                Divider().opacity(0.4)
-                listView
-                footer
-            }
-            .padding(16)
-        }
-        .frame(width: 560, height: 420)
-    }
-
-    private var header: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Clipboard History")
-                    .font(.headline)
-                Text("Type to search, Enter to paste")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            Spacer()
-            Text("\(viewModel.items.count)")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.white.opacity(0.08))
-                .clipShape(Capsule())
-        }
-    }
-
-    private var searchBar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundColor(.secondary)
-            Text(viewModel.query.isEmpty ? "Search clipboard" : viewModel.query)
-                .foregroundColor(viewModel.query.isEmpty ? .secondary : .primary)
-                .lineLimit(1)
-            if !viewModel.query.isEmpty {
-                Button(action: { viewModel.clearQuery() }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.secondary)
+        VStack(spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("剪贴板历史").font(.system(size: 16, weight: .semibold))
+                    Text(captureClipboard ? "选中记录，回车粘贴到原应用" : "收集已暂停 · 已有记录仍可使用")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
+                Spacer()
+                Button("管理记录", action: onManage).controlSize(.small)
             }
-            Spacer()
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.65))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(viewModel.query.isEmpty ? Color.clear : Color.accentColor.opacity(0.4))
-        )
-    }
-
-    private var listView: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    if viewModel.items.isEmpty {
-                        VStack(spacing: 10) {
-                            Image(systemName: viewModel.query.isEmpty ? "doc.on.clipboard" : "magnifyingglass")
-                                .font(.system(size: 30, weight: .light))
-                                .foregroundColor(.secondary)
-                            Text(viewModel.query.isEmpty ? "Your clipboard is ready" : "No matching clips")
-                                .font(.headline)
-                            Text(
-                                viewModel.query.isEmpty
-                                    ? "Copy text or an image in any app and it will appear here."
-                                    : "Try a different search or clear the current query."
-                            )
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            if !viewModel.query.isEmpty {
-                                Button("Clear Search") {
-                                    viewModel.clearQuery()
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("搜索文字或图片文件名…", text: Binding(get: { viewModel.query }, set: viewModel.setQuery))
+                    .textFieldStyle(.plain).focused($searchFocused).accessibilityLabel("搜索剪贴板")
+                if viewModel.isSearching { ProgressView().controlSize(.small) }
+                if !viewModel.query.isEmpty {
+                    Button { viewModel.clearQuery() } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("清除搜索")
+                }
+            }
+            .padding(10).background(Color(nsColor: .textBackgroundColor).opacity(0.7), in: RoundedRectangle(cornerRadius: 8))
+            Picker("记录分类", selection: Binding(get: { viewModel.category }, set: viewModel.setCategory)) {
+                ForEach(ClipboardHistoryViewModel.Category.allCases) { Text($0.title).tag($0) }
+            }.pickerStyle(.segmented).labelsHidden()
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        if viewModel.items.isEmpty {
+                            VStack(spacing: 10) {
+                                Image(systemName: "doc.on.clipboard").font(.system(size: 28, weight: .light)).foregroundStyle(.secondary)
+                                Text(viewModel.query.isEmpty ? "这里还没有记录" : "没有找到匹配内容").font(.headline)
+                                Text(viewModel.category == .all && viewModel.query.isEmpty
+                                     ? (captureClipboard ? "复制文字或图片后，会自动出现在这里。" : "在管理页恢复收集，即可保存新复制的内容。")
+                                     : "试试其他关键词或分类。")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                if !viewModel.query.isEmpty || viewModel.category != .all {
+                                    Button("查看全部记录") { viewModel.resetFilters() }
                                 }
-                                .buttonStyle(.bordered)
-                            }
+                            }.frame(maxWidth: .infinity).padding(.vertical, 40)
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 44)
-                    } else {
                         ForEach(Array(viewModel.items.enumerated()), id: \.element.id) { index, item in
                             ClipboardItemRowView(
-                                item: item,
-                                isSelected: index == viewModel.selectedIndex,
+                                item: item, isSelected: index == viewModel.selectedIndex,
                                 metaText: viewModel.metaText(for: item),
-                                onSelect: { viewModel.selectIndex(index) },
-                                onCopy: { viewModel.copyItem(item) },
-                                onPin: { viewModel.togglePinned(item) },
-                                onInject: { onInject(item) },
-                                onDelete: { viewModel.deleteItem(item) },
-                                onHoverImage: { hovered in
-                                    onHoverImage(hovered)
-                                }
-                            )
-                            .id(item.id)
+                                onSelect: { viewModel.selectIndex(index) }, onCopy: { viewModel.copyItem(item) },
+                                onPin: { viewModel.togglePinned(item) }, onInject: { onInject(item) },
+                                onDelete: { viewModel.deleteItem(item) }, onHoverImage: onHoverImage
+                            ).id(item.id)
                         }
                     }
                 }
-            }
-            .onChange(of: viewModel.selectedIndex) { _ in
-                guard viewModel.items.indices.contains(viewModel.selectedIndex) else { return }
-                let item = viewModel.items[viewModel.selectedIndex]
-                withAnimation(.easeOut(duration: 0.15)) {
-                    proxy.scrollTo(item.id, anchor: .center)
+                .onChange(of: viewModel.selectedItem()?.id) { id in
+                    if let id { proxy.scrollTo(id) }
                 }
             }
+            Divider().opacity(0.5)
+            HStack(spacing: 8) {
+                Text(viewModel.message ?? "\(viewModel.items.count) 条 · ↑↓ 选择 · ⌘C 复制 · ↩ 粘贴 · Esc 关闭")
+                    .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if viewModel.counts.undoable > 0 {
+                    Button("撤销删除") { viewModel.undoDeletion() }.controlSize(.small).disabled(viewModel.isBusy || viewModel.isSearching)
+                }
+                Button("粘贴") {
+                    if let item = viewModel.selectedItem() { onInject(item) }
+                }.buttonStyle(.borderedProminent).controlSize(.small).disabled(viewModel.selectedItem() == nil || viewModel.isSearching)
+            }.frame(minHeight: 28)
         }
-    }
-
-    private var footer: some View {
-        HStack(spacing: 8) {
-            Button("Copy") {
-                if let item = selectedItem {
-                    viewModel.copyItem(item)
-                }
-            }
-            .buttonStyle(.bordered)
-            .disabled(selectedItem == nil)
-
-            Button("Paste") {
-                if let item = selectedItem {
-                    onInject(item)
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(selectedItem == nil)
-
-            Button("Pin") {
-                if let item = selectedItem {
-                    viewModel.togglePinned(item)
-                }
-            }
-            .buttonStyle(.bordered)
-            .disabled(selectedItem == nil)
-
-            Button("Delete") {
-                if let item = selectedItem {
-                    viewModel.deleteItem(item)
-                }
-            }
-            .buttonStyle(.bordered)
-            .disabled(selectedItem == nil)
-
-            Spacer()
-
-            Text("↑↓ Select  ·  ⌘C Copy  ·  ↩ Paste  ·  ⌘⌫ Delete")
-                .font(.caption2)
-                .foregroundColor(.secondary)
+        .padding(18).frame(width: 600, height: 490)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .tint(.indigo)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .onAppear { searchFocused = true }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            if notification.object is ClipboardHistoryPanel { searchFocused = true }
         }
-    }
-
-    private var selectedItem: ClipboardItem? {
-        guard viewModel.items.indices.contains(viewModel.selectedIndex) else { return nil }
-        return viewModel.items[viewModel.selectedIndex]
     }
 }
 
 struct VisualEffectView: NSViewRepresentable {
     let material: NSVisualEffectView.Material
     let blendingMode: NSVisualEffectView.BlendingMode
-
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
         view.material = material
@@ -191,7 +99,6 @@ struct VisualEffectView: NSViewRepresentable {
         view.state = .active
         return view
     }
-
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
         nsView.material = material
         nsView.blendingMode = blendingMode

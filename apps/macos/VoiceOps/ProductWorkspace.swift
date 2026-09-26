@@ -4,6 +4,8 @@ import SwiftUI
 
 extension Notification.Name {
     static let inVoiceOpenDiagnostics = Notification.Name("inVoiceOpenDiagnostics")
+    static let inVoiceOpenHistory = Notification.Name("inVoiceOpenHistory")
+    static let inVoiceSelectHistory = Notification.Name("inVoiceSelectHistory")
     static let inVoiceOpenAssistant = Notification.Name("inVoiceOpenAssistant")
 }
 
@@ -63,6 +65,7 @@ struct PreferencesView: View {
         .tint(.indigo)
         .frame(minWidth: 860, minHeight: 620)
         .task { await status.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: .inVoiceSelectHistory)) { _ in page = .history }
         .onReceive(NotificationCenter.default.publisher(for: .inVoiceOpenDiagnostics)) { _ in
             page = .permissions
         }
@@ -346,71 +349,6 @@ private struct ServiceStatusLine: View {
             Label(availability.title, systemImage: availability == .ready ? "checkmark.circle.fill" : "circle.dotted")
                 .font(.system(size: 12)).foregroundStyle(availability == .ready ? Color.green : Color.orange)
         }.padding(.vertical, 3)
-    }
-}
-
-private struct HistoryWorkspaceView: View {
-    @StateObject private var model = ClipboardHistoryViewModel()
-    @State private var query = ""
-    @State private var voiceOnly = true
-    @State private var copiedID: UUID?
-    private var items: [ClipboardItem] { model.items.filter { !voiceOnly || $0.source == .voiceops } }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            PreferencesHeader(title: "好表达，随时找回", subtitle: "最近 200 条记录保存在本机。固定常用内容，复制后继续使用。")
-            HStack {
-                TextField("搜索文字…", text: $query).textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("搜索历史记录")
-                Picker("记录类型", selection: $voiceOnly) {
-                    Text("语音输入").tag(true)
-                    Text("全部剪贴板").tag(false)
-                }.pickerStyle(.segmented).frame(width: 210)
-            }
-            if items.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: query.isEmpty ? "text.bubble" : "magnifyingglass")
-                        .font(.system(size: 34, weight: .light)).foregroundStyle(.indigo.opacity(0.6))
-                    Text(query.isEmpty ? "下一次表达，从这里留下" : "没有找到匹配内容")
-                        .font(.system(size: 16, weight: .semibold))
-                    Text(query.isEmpty ? "完成一次听写后，结果会自动出现在这里。" : "试试更短的关键词，或切换到全部剪贴板。")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
-                    if !query.isEmpty { Button("清除搜索") { query = "" } }
-                }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        ForEach(items) { item in
-                            historyRow(item)
-                        }
-                    }.padding(.bottom, 8)
-                }
-            }
-            Label("只有你主动复制或完成听写时才会保存记录。可在「通用与隐私」暂停剪贴板收集。", systemImage: "lock")
-                .font(.system(size: 10)).foregroundStyle(.secondary)
-        }.padding(28)
-        .onChange(of: query) { model.setQuery($0) }
-    }
-
-    private func historyRow(_ item: ClipboardItem) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let text = item.contentText {
-                Text(text).font(.system(size: 13)).lineLimit(6).textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                Label("图片 · 复制后可粘贴到其他应用", systemImage: "photo").font(.system(size: 13))
-            }
-            HStack(spacing: 9) {
-                Image(systemName: item.source == .voiceops ? "waveform" : "doc.on.clipboard")
-                Text(Date(timeIntervalSince1970: Double(item.timestamp) / 1_000), style: .relative)
-                if item.pinned { Image(systemName: "pin.fill").foregroundStyle(.indigo) }
-                Spacer()
-                Button(item.pinned ? "取消固定" : "固定") { model.togglePinned(item) }
-                Button(copiedID == item.id ? "已复制" : "复制") { model.copyItem(item); copiedID = item.id }
-            }.font(.system(size: 11)).foregroundStyle(.secondary).controlSize(.small)
-        }
-        .padding(16).background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.06)))
     }
 }
 

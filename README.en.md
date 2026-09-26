@@ -85,6 +85,18 @@ After it is unplugged, the next recording transparently falls back to the
 current macOS input. Board F13/F14 reports are accepted only from its exact USB
 VID/PID, so docks and unrelated keyboards cannot create a second recording.
 
+### Clipboard history
+
+Open **History** in the main window for full text and image previews, or use
+`Command + Fn` to search and paste into the app you were using.
+
+- Filter by all clips, pinned clips, text, images, or voice input. Search text and image filenames, including Chinese and literal punctuation.
+- Pin frequently used clips. The latest 200 ordinary clips are kept, with pinned clips retained separately.
+- Delete individual clips or use **Manage → Clear unpinned**. The last deletion/cleanup batch can be undone, including after relaunch, until another deletion replaces it.
+- The quick panel supports native text editing and input methods: `↑/↓` selects, `Return` pastes, `Esc` closes, and `Command + Delete` deletes. `Command + C` copies selected search text when there is a selection, otherwise it copies the selected clip.
+- In the main window, `Command + F` focuses search and `Shift + Command + C` copies the full selected clip. Clipboard capture can be paused directly on the History page.
+
+
 ## Supported microphone hardware
 
 ![Using the optional ESP32-S3 Touch AMOLED as a push-to-talk microphone for inVoice](docs/assets/voiceops-hardware-use-case.png)

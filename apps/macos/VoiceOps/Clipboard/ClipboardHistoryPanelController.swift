@@ -4,163 +4,121 @@ import SwiftUI
 @MainActor
 final class ClipboardHistoryPanelController {
     static let shared = ClipboardHistoryPanelController()
-
-    private let viewModel = ClipboardHistoryViewModel()
+    private let viewModel: ClipboardHistoryViewModel
     private var panel: ClipboardHistoryPanel?
     private var previewPanel: ImagePreviewPanel?
-    private var eventTap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
+    private var keyMonitor: Any?
+    private var resignObserver: Any?
+    private var previewTask: Task<Void, Never>?
     private var previewedItemID: UUID?
+    private var targetPID: pid_t?
 
-    private init() {
+    init(store: ClipboardStore = .shared) {
+        viewModel = ClipboardHistoryViewModel(store: store)
         createPanel()
     }
 
-    func toggle() {
-        if panel?.isVisible == true {
-            hide()
-        } else {
-            show()
-        }
-    }
+    func toggle() { panel?.isVisible == true ? hide() : show() }
 
     func show() {
-        if panel == nil {
-            createPanel()
-        }
+        targetPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         viewModel.refresh(resetSelection: true)
         panel?.show()
         hidePreview()
         startKeyMonitor()
     }
 
-    func hide() {
+    func hide(resetSearch: Bool = true) {
         panel?.hide()
         stopKeyMonitor()
         hidePreview()
-        viewModel.clearQuery()
+        if resetSearch { viewModel.clearQuery() }
+    }
+
+    private func paste(_ item: ClipboardItem) {
+        guard !viewModel.isSearching else { viewModel.showMessage("正在搜索，请稍候"); return }
+        let destination = targetPID
+        hide(resetSearch: false)
+        Task {
+            let pasted = await viewModel.pasteItem(item, targetPID: destination)
+            if !pasted {
+                panel?.show()
+                startKeyMonitor()
+            } else { viewModel.clearQuery() }
+        }
     }
 
     private func createPanel() {
-        let view = ClipboardHistoryView(
+        panel = ClipboardHistoryPanel(rootView: ClipboardHistoryView(
             viewModel: viewModel,
-            onInject: { [weak self] item in
-                self?.viewModel.activateItem(item)
+            onInject: { [weak self] item in self?.paste(item) },
+            onHoverImage: { [weak self] item in self?.handleHover(item: item) },
+            onManage: { [weak self] in
                 self?.hide()
-            },
-            onHoverImage: { [weak self] item in
-                self?.handleHover(item: item)
+                NotificationCenter.default.post(name: .inVoiceOpenHistory, object: nil)
             }
-        )
-        panel = ClipboardHistoryPanel(rootView: view)
+        ))
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: panel, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.panel?.isVisible == true, self.panel?.isKeyWindow == false else { return }
+                self.hide()
+            }
+        }
     }
 
     private func startKeyMonitor() {
-        guard eventTap == nil else { return }
-        let mask = (1 << CGEventType.keyDown.rawValue)
-        let callback: CGEventTapCallBack = { _, type, event, refcon in
-            guard let refcon else { return Unmanaged.passUnretained(event) }
-            let controller = Unmanaged<ClipboardHistoryPanelController>.fromOpaque(refcon).takeUnretainedValue()
-            if type != .keyDown {
-                return Unmanaged.passUnretained(event)
-            }
-            return controller.handleEventTap(event)
+        guard keyMonitor == nil else { return }
+        // A native field editor handles IME, selection, paste and ordinary text editing.
+        // This monitor is scoped to our key window; other applications keep their keystrokes.
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, event.window === self.panel else { return event }
+            return self.handleKey(event) ? nil : event
         }
-
-        eventTap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: CGEventMask(mask),
-            callback: callback,
-            userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
-        )
-        guard let eventTap else { return }
-        runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
-        if let runLoopSource {
-            CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-        }
-        CGEvent.tapEnable(tap: eventTap, enable: true)
     }
 
     private func stopKeyMonitor() {
-        if let eventTap {
-            CGEvent.tapEnable(tap: eventTap, enable: false)
-        }
-        if let runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-        }
-        eventTap = nil
-        runLoopSource = nil
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
     }
 
-    private func handleEventTap(_ cgEvent: CGEvent) -> Unmanaged<CGEvent>? {
-        guard panel?.isVisible == true else { return Unmanaged.passUnretained(cgEvent) }
-        guard let event = NSEvent(cgEvent: cgEvent) else { return Unmanaged.passUnretained(cgEvent) }
-
-        let handled = handleKey(event)
-        return handled ? nil : Unmanaged.passUnretained(cgEvent)
-    }
-
-    @discardableResult
     private func handleKey(_ event: NSEvent) -> Bool {
         guard panel?.isVisible == true else { return false }
-
-        switch event.keyCode {
-        case 53: // Esc
-            hide()
-            return true
-        case 126: // Up
-            viewModel.moveSelection(delta: -1)
-            return true
-        case 125: // Down
-            viewModel.moveSelection(delta: 1)
-            return true
-        case 36: // Return
-            viewModel.activateSelected()
-            hide()
-            return true
-        case 51, 117: // Delete
-            if event.modifierFlags.contains(.command) {
-                viewModel.deleteSelected()
-            } else {
-                viewModel.deleteQueryBackward()
-            }
-            return true
-        default:
-            break
-        }
-
+        let editor = panel?.firstResponder as? NSTextView
+        // Arrow/Return/Escape belong to the input method while composing Chinese, Japanese, etc.
+        if editor?.hasMarkedText() == true { return false }
         let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if mods.contains(.command) {
-            if event.keyCode == 8 { // C
-                viewModel.copySelected()
-                return true
+            switch event.keyCode {
+            case 8 where editor?.selectedRange().length ?? 0 == 0: viewModel.copySelected(); return true
+            case 51, 117: viewModel.deleteSelected(); return true
+            case 6 where viewModel.query.isEmpty && viewModel.counts.undoable > 0: viewModel.undoDeletion(); return true
+            default: return false
             }
+        }
+        guard !mods.contains(.option), !mods.contains(.control), !mods.contains(.shift) else { return false }
+        switch event.keyCode {
+        case 53: hide(); return true
+        case 126: viewModel.moveSelection(delta: -1); return true
+        case 125: viewModel.moveSelection(delta: 1); return true
+        case 36, 76:
+            if let item = viewModel.selectedItem() { paste(item) }
             return true
+        default: return false
         }
-        if mods.contains(.control) || mods.contains(.option) {
-            return true
-        }
-
-        guard let chars = event.characters, !chars.isEmpty else { return true }
-        if chars == "\r" || chars == "\n" { return true }
-        if chars.count == 1 {
-            viewModel.appendQuery(chars)
-        }
-        return true
     }
 
     private func handleHover(item: ClipboardItem?) {
-        guard let item, let image = viewModel.previewImage(for: item) else {
-            hidePreview()
-            return
-        }
-        if previewedItemID == item.id {
-            return
-        }
+        guard let item, let path = item.contentImagePath else { hidePreview(); return }
+        guard previewedItemID != item.id else { return }
+        hidePreview()
         previewedItemID = item.id
-        showPreview(image: image)
+        previewTask = Task {
+            let image = await ClipboardImageLoader.shared.image(path: path, pixels: 700)
+            guard !Task.isCancelled, let image, previewedItemID == item.id, panel?.isVisible == true else { return }
+            showPreview(image: image)
+        }
     }
 
     private func showPreview(image: NSImage) {
@@ -173,6 +131,8 @@ final class ClipboardHistoryPanelController {
     }
 
     private func hidePreview() {
+        previewTask?.cancel()
+        previewTask = nil
         previewedItemID = nil
         previewPanel?.hide()
     }

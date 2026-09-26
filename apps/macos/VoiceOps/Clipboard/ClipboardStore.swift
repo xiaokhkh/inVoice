@@ -11,6 +11,7 @@ final class ClipboardStore {
     struct Filter {
         var type: ClipboardItem.ItemType?
         var source: ClipboardItem.Source?
+        var pinnedOnly = false
     }
 
     private let queue = DispatchQueue(label: "voiceops.clipboard.store")
@@ -19,10 +20,10 @@ final class ClipboardStore {
     private let imagesURL: URL
     private var db: OpaquePointer?
 
-    private init() {
+    init(directory: URL? = nil) {
         let fileManager = FileManager.default
         let support = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let base = support.appendingPathComponent("mlx-voiceops", isDirectory: true)
+        let base = directory ?? support.appendingPathComponent("mlx-voiceops", isDirectory: true)
         imagesURL = base.appendingPathComponent("clipboard_images", isDirectory: true)
         dbURL = base.appendingPathComponent("clipboard.sqlite3")
 
@@ -39,18 +40,18 @@ final class ClipboardStore {
     func recordSystemText(_ text: String, appBundleID: String?) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let normalized = normalizeText(trimmed)
-        let hash = hashText(normalized)
+        let hash = hashText(text)
 
         queue.async {
-            guard !self.hasHash(hash) else { return }
+            if self.refreshDuplicate(type: .text, source: .system, text: text, hash: hash,
+                                     appBundleID: appBundleID) { return }
             let item = ClipboardItem(
                 id: UUID(),
                 type: .text,
                 source: .system,
                 sessionID: nil,
-                timestamp: Self.nowMs(),
-                contentText: trimmed,
+                timestamp: self.nextTimestamp(),
+                contentText: text,
                 contentImagePath: nil,
                 contentOriginalPath: nil,
                 contentHash: hash,
@@ -77,18 +78,19 @@ final class ClipboardStore {
     ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let normalized = normalizeText(trimmed)
-        let hash = hashText(normalized)
+        let hash = hashText(text)
 
         queue.async {
-            guard !self.hasHash(hash) else { return }
+            if self.refreshDuplicate(type: .text, source: .voiceops, text: text, hash: hash,
+                                     appBundleID: appBundleID, sessionID: sessionID,
+                                     selectedText: selectedText, voiceIntent: voiceIntent, llmUsed: llmUsed) { return }
             let item = ClipboardItem(
                 id: UUID(),
                 type: .text,
                 source: .voiceops,
                 sessionID: sessionID,
-                timestamp: Self.nowMs(),
-                contentText: trimmed,
+                timestamp: self.nextTimestamp(),
+                contentText: text,
                 contentImagePath: nil,
                 contentOriginalPath: nil,
                 contentHash: hash,
@@ -110,7 +112,8 @@ final class ClipboardStore {
         let hash = hashData(imageData)
 
         queue.async {
-            guard !self.hasHash(hash) else { return }
+            if self.refreshDuplicate(type: .image, source: .system, text: nil, hash: hash,
+                                     appBundleID: appBundleID, originalPath: originalPath) { return }
             let id = UUID()
             let path = self.imageURL(for: id).path
             do {
@@ -123,7 +126,7 @@ final class ClipboardStore {
                 type: .image,
                 source: .system,
                 sessionID: nil,
-                timestamp: Self.nowMs(),
+                timestamp: self.nextTimestamp(),
                 contentText: nil,
                 contentImagePath: path,
                 contentOriginalPath: originalPath,
@@ -143,9 +146,10 @@ final class ClipboardStore {
         }
     }
 
-    func getRecentItems(limit: Int, filter: Filter? = nil) -> [ClipboardItem] {
+    /// Filtering happens before LIMIT, including for pinned clips beyond the ordinary retention limit.
+    func getRecentItems(limit: Int = Int(Int32.max), filter: Filter? = nil, query: String = "") -> [ClipboardItem] {
         queue.sync {
-            var clauses: [String] = []
+            var clauses = ["deleted_at IS NULL"]
             var args: [String] = []
             if let type = filter?.type {
                 clauses.append("type = ?")
@@ -155,55 +159,49 @@ final class ClipboardStore {
                 clauses.append("source = ?")
                 args.append(source.rawValue)
             }
-
-            let whereSQL = clauses.isEmpty ? "" : "WHERE " + clauses.joined(separator: " AND ")
+            if filter?.pinnedOnly == true { clauses.append("pinned = 1") }
+            let search = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !search.isEmpty {
+                // instr treats %, _ and backslashes literally, unlike LIKE.
+                clauses.append("(instr(lower(COALESCE(content_text, '')), lower(?)) > 0 OR instr(lower(COALESCE(content_original_path, '')), lower(?)) > 0)")
+                args.append(contentsOf: [search, search])
+            }
             let sql = """
             SELECT id, type, source, session_id, timestamp, content_text, content_image_path,
                    content_original_path, content_hash, pinned, selected_text, voice_intent, llm_used,
                    app_bundle_id
             FROM clipboard_items
-            \(whereSQL)
-            ORDER BY pinned DESC, timestamp DESC
+            WHERE \(clauses.joined(separator: " AND "))
+            ORDER BY pinned DESC, timestamp DESC, rowid DESC
             LIMIT ?;
             """
-
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return [] }
             defer { sqlite3_finalize(statement) }
-
-            var bindIndex: Int32 = 1
-            for arg in args {
-                sqlite3_bind_text(statement, bindIndex, arg, -1, sqliteTransient)
-                bindIndex += 1
+            for (index, arg) in args.enumerated() {
+                sqlite3_bind_text(statement, Int32(index + 1), arg, -1, sqliteTransient)
             }
-            sqlite3_bind_int(statement, bindIndex, Int32(limit))
-
+            sqlite3_bind_int(statement, Int32(args.count + 1), Int32(clamping: limit))
             return fetchItems(from: statement)
         }
     }
 
-    func searchText(_ query: String, limit: Int) -> [ClipboardItem] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return getRecentItems(limit: limit) }
+    struct Counts {
+        var total = 0
+        var pinned = 0
+        var undoable = 0
+    }
 
-        return queue.sync {
-            let sql = """
-            SELECT id, type, source, session_id, timestamp, content_text, content_image_path,
-                   content_original_path, content_hash, pinned, selected_text, voice_intent, llm_used,
-                   app_bundle_id
-            FROM clipboard_items
-            WHERE type = 'text' AND content_text LIKE ?
-            ORDER BY pinned DESC, timestamp DESC
-            LIMIT ?;
-            """
+    func counts() -> Counts {
+        queue.sync {
+            let sql = "SELECT SUM(deleted_at IS NULL), SUM(deleted_at IS NULL AND pinned = 1), SUM(deleted_at IS NOT NULL) FROM clipboard_items;"
             var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return [] }
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return Counts() }
             defer { sqlite3_finalize(statement) }
-
-            let like = "%\(trimmed)%"
-            sqlite3_bind_text(statement, 1, like, -1, sqliteTransient)
-            sqlite3_bind_int(statement, 2, Int32(limit))
-            return fetchItems(from: statement)
+            guard sqlite3_step(statement) == SQLITE_ROW else { return Counts() }
+            return Counts(total: Int(sqlite3_column_int64(statement, 0)),
+                          pinned: Int(sqlite3_column_int64(statement, 1)),
+                          undoable: Int(sqlite3_column_int64(statement, 2)))
         }
     }
 
@@ -214,7 +212,7 @@ final class ClipboardStore {
                    content_original_path, content_hash, pinned, selected_text, voice_intent, llm_used,
                    app_bundle_id
             FROM clipboard_items
-            WHERE session_id = ?
+            WHERE session_id = ? AND deleted_at IS NULL
             ORDER BY pinned DESC, timestamp DESC;
             """
             var statement: OpaquePointer?
@@ -226,21 +224,53 @@ final class ClipboardStore {
         }
     }
 
-    func deleteItem(id: UUID) {
-        queue.async { [self] in
-            let imagePath = self.fetchImagePath(for: id)
-            let sql = "DELETE FROM clipboard_items WHERE id = ?;"
-            var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(self.db, sql, -1, &statement, nil) == SQLITE_OK else { return }
-            defer { sqlite3_finalize(statement) }
-
-            sqlite3_bind_text(statement, 1, id.uuidString, -1, sqliteTransient)
-            if sqlite3_step(statement) == SQLITE_DONE {
-                if let imagePath {
-                    self.removeImage(atPath: imagePath)
-                }
-                self.notifyChange()
+    /// nil clears only unpinned clips. The last deletion batch survives relaunch and can be undone.
+    /// Purge the previous batch only after the new deletion commits; never remove original user files.
+    func deleteItems(ids: [UUID]? = nil) -> Int? {
+        queue.sync {
+            guard let db else { return nil }
+            if let ids, ids.isEmpty { return 0 }
+            let selection = ids.map { "id IN (" + Array(repeating: "?", count: $0.count).joined(separator: ",") + ")" } ?? "pinned = 0"
+            guard sqlite3_exec(db, "BEGIN IMMEDIATE;", nil, nil, nil) == SQLITE_OK else { return nil }
+            var committed = false
+            defer { if !committed { sqlite3_exec(db, "ROLLBACK;", nil, nil, nil) } }
+            var previousPaths: [String] = []
+            var old: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT content_image_path FROM clipboard_items WHERE deleted_at IS NOT NULL;", -1, &old, nil) == SQLITE_OK else { return nil }
+            while sqlite3_step(old) == SQLITE_ROW {
+                if let path = readString(old, index: 0) { previousPaths.append(path) }
             }
+            sqlite3_finalize(old)
+            guard sqlite3_exec(db, "DELETE FROM clipboard_items WHERE deleted_at IS NOT NULL;", nil, nil, nil) == SQLITE_OK else { return nil }
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "UPDATE clipboard_items SET deleted_at = ? WHERE deleted_at IS NULL AND \(selection);", -1, &statement, nil) == SQLITE_OK else { return nil }
+            defer { sqlite3_finalize(statement) }
+            sqlite3_bind_int64(statement, 1, Self.nowMs())
+            for (index, id) in (ids ?? []).enumerated() {
+                sqlite3_bind_text(statement, Int32(index + 2), id.uuidString, -1, sqliteTransient)
+            }
+            guard sqlite3_step(statement) == SQLITE_DONE else { return nil }
+            let changed = Int(sqlite3_changes(db))
+            guard changed > 0 else { return 0 } // rollback also preserves the previous undo batch
+            guard sqlite3_exec(db, "COMMIT;", nil, nil, nil) == SQLITE_OK else { return nil }
+            committed = true
+            previousPaths.forEach { removeImage(atPath: $0) }
+            notifyChange()
+            return changed
+        }
+    }
+
+    func undoDeletion() -> Int? {
+        queue.sync {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "UPDATE clipboard_items SET deleted_at = NULL, timestamp = ? WHERE deleted_at IS NOT NULL;", -1, &statement, nil) == SQLITE_OK else { return nil }
+            defer { sqlite3_finalize(statement) }
+            sqlite3_bind_int64(statement, 1, nextTimestamp())
+            guard sqlite3_step(statement) == SQLITE_DONE else { return nil }
+            let count = Int(sqlite3_changes(db))
+            enforceRetention()
+            notifyChange()
+            return count
         }
     }
 
@@ -250,14 +280,17 @@ final class ClipboardStore {
 
     func setPinned(_ pinned: Bool, for id: UUID) {
         queue.async { [self] in
-            let sql = "UPDATE clipboard_items SET pinned = ? WHERE id = ?;"
+            let sql = "UPDATE clipboard_items SET pinned = ?, timestamp = CASE WHEN ? = 0 THEN ? ELSE timestamp END WHERE id = ? AND deleted_at IS NULL;"
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(self.db, sql, -1, &statement, nil) == SQLITE_OK else { return }
             defer { sqlite3_finalize(statement) }
 
             sqlite3_bind_int(statement, 1, pinned ? 1 : 0)
-            sqlite3_bind_text(statement, 2, id.uuidString, -1, sqliteTransient)
+            sqlite3_bind_int(statement, 2, pinned ? 1 : 0)
+            sqlite3_bind_int64(statement, 3, nextTimestamp())
+            sqlite3_bind_text(statement, 4, id.uuidString, -1, sqliteTransient)
             if sqlite3_step(statement) == SQLITE_DONE {
+                self.enforceRetention()
                 self.notifyChange()
             }
         }
@@ -297,6 +330,7 @@ final class ClipboardStore {
         }
         sqlite3_exec(db, "ALTER TABLE clipboard_items ADD COLUMN content_original_path TEXT;", nil, nil, nil)
         sqlite3_exec(db, "ALTER TABLE clipboard_items ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;", nil, nil, nil)
+        sqlite3_exec(db, "ALTER TABLE clipboard_items ADD COLUMN deleted_at INTEGER;", nil, nil, nil)
     }
 
     private func insert(_ item: ClipboardItem) -> Bool {
@@ -392,19 +426,35 @@ final class ClipboardStore {
         return String(cString: cstr)
     }
 
-    private func hasHash(_ hash: String) -> Bool {
-        guard let db else { return false }
-        let sql = "SELECT id FROM clipboard_items WHERE content_hash = ? LIMIT 1;"
+    private func refreshDuplicate(
+        type: ClipboardItem.ItemType, source: ClipboardItem.Source, text: String?, hash: String,
+        appBundleID: String?, sessionID: UUID? = nil, selectedText: String? = nil,
+        voiceIntent: String? = nil, llmUsed: String? = nil, originalPath: String? = nil
+    ) -> Bool {
+        let match = type == .text ? "content_text = ?" : "content_hash = ?"
+        let sql = """
+        UPDATE clipboard_items SET timestamp = ?, app_bundle_id = ?,
+            session_id = ?, selected_text = ?, voice_intent = ?, llm_used = ?,
+            content_original_path = COALESCE(?, content_original_path)
+        WHERE id = (SELECT id FROM clipboard_items WHERE deleted_at IS NULL
+            AND type = ? AND source = ? AND \(match) ORDER BY timestamp DESC LIMIT 1);
+        """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return false }
         defer { sqlite3_finalize(statement) }
-        sqlite3_bind_text(statement, 1, hash, -1, sqliteTransient)
-        return sqlite3_step(statement) == SQLITE_ROW
+        sqlite3_bind_int64(statement, 1, nextTimestamp())
+        for (index, value) in [appBundleID, sessionID?.uuidString, selectedText, voiceIntent, llmUsed,
+                               originalPath, type.rawValue, source.rawValue, text ?? hash].enumerated() {
+            bindOptional(statement, index: Int32(index + 2), value: value)
+        }
+        guard sqlite3_step(statement) == SQLITE_DONE, sqlite3_changes(db) > 0 else { return false }
+        notifyChange()
+        return true
     }
 
     private func enforceRetention() {
         guard let db else { return }
-        let countSQL = "SELECT COUNT(*) FROM clipboard_items WHERE pinned = 0;"
+        let countSQL = "SELECT COUNT(*) FROM clipboard_items WHERE pinned = 0 AND deleted_at IS NULL;"
         var countStmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, countSQL, -1, &countStmt, nil) == SQLITE_OK else { return }
         defer { sqlite3_finalize(countStmt) }
@@ -418,8 +468,8 @@ final class ClipboardStore {
         DELETE FROM clipboard_items
         WHERE id IN (
             SELECT id FROM clipboard_items
-            WHERE pinned = 0
-            ORDER BY timestamp ASC
+            WHERE pinned = 0 AND deleted_at IS NULL
+            ORDER BY timestamp ASC, rowid ASC
             LIMIT ?
         );
         """
@@ -427,7 +477,7 @@ final class ClipboardStore {
         guard sqlite3_prepare_v2(db, deleteSQL, -1, &deleteStmt, nil) == SQLITE_OK else { return }
         defer { sqlite3_finalize(deleteStmt) }
         sqlite3_bind_int(deleteStmt, 1, Int32(remove))
-        _ = sqlite3_step(deleteStmt)
+        guard sqlite3_step(deleteStmt) == SQLITE_DONE else { return }
         for item in oldest {
             if let path = item.path {
                 removeImage(atPath: path)
@@ -441,11 +491,6 @@ final class ClipboardStore {
         }
     }
 
-    private func normalizeText(_ text: String) -> String {
-        let components = text.components(separatedBy: .whitespacesAndNewlines)
-        return components.filter { !$0.isEmpty }.joined(separator: " ")
-    }
-
     private func hashText(_ text: String) -> String {
         let data = Data(text.utf8)
         let digest = SHA256.hash(data: data)
@@ -457,24 +502,13 @@ final class ClipboardStore {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    private func fetchImagePath(for id: UUID) -> String? {
-        guard let db else { return nil }
-        let sql = "SELECT content_image_path FROM clipboard_items WHERE id = ? LIMIT 1;"
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return nil }
-        defer { sqlite3_finalize(statement) }
-        sqlite3_bind_text(statement, 1, id.uuidString, -1, sqliteTransient)
-        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        return readString(statement, index: 0)
-    }
-
     private func fetchOldestItems(limit: Int) -> [(id: String, path: String?)] {
         guard let db else { return [] }
         let sql = """
         SELECT id, content_image_path
         FROM clipboard_items
-        WHERE pinned = 0
-        ORDER BY timestamp ASC
+        WHERE pinned = 0 AND deleted_at IS NULL
+        ORDER BY timestamp ASC, rowid ASC
         LIMIT ?;
         """
         var statement: OpaquePointer?
@@ -493,8 +527,18 @@ final class ClipboardStore {
     }
 
     private func removeImage(atPath path: String) {
-        let url = URL(fileURLWithPath: path)
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        guard url.deletingLastPathComponent() == imagesURL.standardizedFileURL else { return }
         try? FileManager.default.removeItem(at: url)
+    }
+
+    /// A strict order also covers several copies in the same millisecond and restoring a batch.
+    private func nextTimestamp() -> Int64 {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT MAX(timestamp) FROM clipboard_items;", -1, &statement, nil) == SQLITE_OK else { return Self.nowMs() }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { return Self.nowMs() }
+        return max(Self.nowMs(), sqlite3_column_int64(statement, 0) + 1)
     }
 
     private static func nowMs() -> Int64 {

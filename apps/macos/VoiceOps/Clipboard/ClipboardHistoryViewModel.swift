@@ -3,73 +3,97 @@ import Foundation
 
 @MainActor
 final class ClipboardHistoryViewModel: ObservableObject {
+    enum Category: String, CaseIterable, Identifiable {
+        case all, pinned, text, image, voice
+        var id: Self { self }
+        var title: String {
+            switch self {
+            case .all: return "全部"
+            case .pinned: return "已固定"
+            case .text: return "文字"
+            case .image: return "图片"
+            case .voice: return "语音"
+            }
+        }
+        var filter: ClipboardStore.Filter {
+            switch self {
+            case .all: return .init()
+            case .pinned: return .init(pinnedOnly: true)
+            case .text: return .init(type: .text)
+            case .image: return .init(type: .image)
+            case .voice: return .init(source: .voiceops)
+            }
+        }
+    }
+
     @Published private(set) var items: [ClipboardItem] = []
-    @Published private(set) var selectedIndex: Int = 0
-    @Published private(set) var query: String = ""
+    @Published private(set) var selectedIndex = 0
+    @Published private(set) var query = ""
+    @Published private(set) var category: Category = .all
+    @Published private(set) var counts = ClipboardStore.Counts()
+    @Published private(set) var message: String?
+    @Published private(set) var copiedID: UUID?
+    @Published private(set) var isBusy = false
+    @Published private(set) var isSearching = false
 
     private let store: ClipboardStore
     private let injector: FocusInjector
+    private let pasteboard: NSPasteboard
     private var observer: Any?
-    private let maxItems = 200
-    private var imageMetaCache: [UUID: String] = [:]
     private var refreshGeneration = 0
     private var searchWorkItem: DispatchWorkItem?
-    private let imageCache: NSCache<NSUUID, NSImage> = {
-        let cache = NSCache<NSUUID, NSImage>()
-        cache.countLimit = 30
-        cache.totalCostLimit = 48 * 1024 * 1024
-        return cache
+    private var feedbackWorkItem: DispatchWorkItem?
+    private var appNames: [String: String] = [:]
+    private let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.unitsStyle = .abbreviated
+        return formatter
     }()
 
-    init(store: ClipboardStore = .shared, injector: FocusInjector? = nil) {
+    init(store: ClipboardStore = .shared, injector: FocusInjector? = nil, pasteboard: NSPasteboard = .general) {
         self.store = store
+        self.pasteboard = pasteboard
         self.injector = injector ?? FocusInjector()
         observer = NotificationCenter.default.addObserver(
-            forName: ClipboardStore.didChangeNotification,
-            object: nil,
-            queue: .main
+            forName: ClipboardStore.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
-                self?.refresh(resetSelection: false)
-            }
+            Task { @MainActor in self?.refresh(resetSelection: false) }
         }
         refresh(resetSelection: true)
     }
 
     deinit {
-        if let observer {
-            NotificationCenter.default.removeObserver(observer)
-        }
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+        searchWorkItem?.cancel()
+        feedbackWorkItem?.cancel()
     }
 
     func refresh(resetSelection: Bool) {
         refreshGeneration &+= 1
         let generation = refreshGeneration
         let selectionID = selectedItem()?.id
+        let previousIndex = selectedIndex
         let query = self.query
+        let filter = category.filter
         let store = self.store
-        let maxItems = self.maxItems
         DispatchQueue.global(qos: .userInitiated).async {
-            let items: [ClipboardItem]
-            if query.isEmpty {
-                items = store.getRecentItems(limit: maxItems)
-            } else {
-                items = store.searchText(query, limit: maxItems)
-            }
+            let items = store.getRecentItems(filter: filter, query: query)
+            let counts = store.counts()
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.refreshGeneration == generation, self.query == query else { return }
+                guard let self, self.refreshGeneration == generation else { return }
                 self.items = items
-                self.selectedIndex = resetSelection ? 0 : (items.firstIndex { $0.id == selectionID } ?? 0)
-                let ids = Set(items.map { $0.id })
-                self.imageMetaCache = self.imageMetaCache.filter { ids.contains($0.key) }
+                self.isSearching = false
+                self.counts = counts
+                self.selectedIndex = resetSelection ? 0 : (items.firstIndex { $0.id == selectionID } ?? min(previousIndex, max(0, items.count - 1)))
             }
         }
     }
 
     func setQuery(_ value: String) {
-        let trimmed = value.trimmingCharacters(in: .newlines)
-        if trimmed == query { return }
-        query = trimmed
+        guard value != query else { return }
+        query = value
+        isSearching = true
         refreshGeneration &+= 1
         searchWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.refresh(resetSelection: true) }
@@ -77,26 +101,20 @@ final class ClipboardHistoryViewModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
     }
 
-    func appendQuery(_ value: String) {
-        let next = query + value
-        setQuery(next)
+    func setCategory(_ value: Category) {
+        guard category != value else { return }
+        category = value
+        isSearching = true
+        searchWorkItem?.cancel()
+        refresh(resetSelection: true)
     }
 
-    func deleteQueryBackward() {
-        guard !query.isEmpty else { return }
-        setQuery(String(query.dropLast()))
-    }
-
-    func clearQuery() {
-        setQuery("")
-    }
+    func clearQuery() { setQuery("") }
+    func resetFilters() { clearQuery(); setCategory(.all) }
 
     func moveSelection(delta: Int) {
         guard !items.isEmpty else { return }
-        var next = selectedIndex + delta
-        if next < 0 { next = 0 }
-        if next >= items.count { next = items.count - 1 }
-        selectedIndex = next
+        selectedIndex = min(max(selectedIndex + delta, 0), items.count - 1)
     }
 
     func selectIndex(_ index: Int) {
@@ -104,203 +122,147 @@ final class ClipboardHistoryViewModel: ObservableObject {
         selectedIndex = index
     }
 
+    func selectID(_ id: UUID?) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        selectedIndex = index
+    }
+
     func selectedItem() -> ClipboardItem? {
-        guard items.indices.contains(selectedIndex) else { return nil }
-        return items[selectedIndex]
+        items.indices.contains(selectedIndex) ? items[selectedIndex] : nil
     }
 
     func copySelected() {
-        guard let item = selectedItem() else { return }
-        copyItem(item)
-    }
-
-    func injectSelected() {
-        guard let item = selectedItem() else { return }
-        injectItem(item)
-    }
-
-    func activateSelected() {
-        guard let item = selectedItem() else { return }
-        activateItem(item)
+        if let item = selectedItem() { copyItem(item) }
     }
 
     func deleteSelected() {
-        guard let item = selectedItem() else { return }
-        deleteItem(item)
+        if let item = selectedItem() { deleteItem(item) }
     }
 
     func deleteItem(_ item: ClipboardItem) {
-        store.deleteItem(id: item.id)
+        mutate({ $0.deleteItems(ids: [item.id]) }, success: { "已删除 \($0) 条记录，可撤销" })
+    }
+
+    func clearUnpinned() {
+        mutate({ $0.deleteItems() }, success: { "已清理 \($0) 条记录，固定内容已保留" })
+    }
+
+    func undoDeletion() {
+        guard !isBusy, !isSearching else { return }
+        mutate({ $0.undoDeletion() }, success: { "已恢复 \($0) 条记录" })
+        resetFilters()
+    }
+
+    private func mutate(_ operation: @escaping @Sendable (ClipboardStore) -> Int?, success: @escaping (Int) -> String) {
+        guard !isBusy, !isSearching else { return }
+        isBusy = true
+        let store = self.store
+        Task {
+            let count = await Task.detached(priority: .userInitiated) { operation(store) }.value
+            isBusy = false
+            showMessage(count.map(success) ?? "操作未完成，请重试。原记录已保留。")
+            refresh(resetSelection: false)
+        }
     }
 
     func togglePinned(_ item: ClipboardItem) {
+        guard !isSearching else { return }
         store.setPinned(!item.pinned, for: item.id)
     }
 
-    func copyItem(_ item: ClipboardItem) {
+    @discardableResult
+    func copyItem(_ item: ClipboardItem) -> Bool {
+        guard !isSearching else { showMessage("正在搜索，请稍候"); return false }
+        let pb = pasteboard
+        let didWrite: Bool
         switch item.type {
         case .text:
-            guard let text = item.contentText, !text.isEmpty else { return }
+            guard let text = item.contentText, !text.isEmpty else {
+                showMessage("这条记录没有可复制的文字")
+                return false
+            }
             ClipboardObserver.shared.markInternalWrite()
-            let pb = NSPasteboard.general
             pb.clearContents()
-            pb.setString(text, forType: .string)
+            didWrite = pb.setString(text, forType: .string)
         case .image:
-            guard let imageData = loadImageData(for: item) else { return }
+            guard let data = imageData(for: item) else {
+                showMessage("图片文件已丢失，无法复制")
+                return false
+            }
             ClipboardObserver.shared.markInternalWrite()
-            let pb = NSPasteboard.general
             pb.clearContents()
-            if let original = validFileURL(for: item) {
-                pb.writeObjects([original as NSURL])
-            }
-            if let image = decodedImage(from: imageData) {
-                pb.writeObjects([image])
-                if let tiff = image.tiffRepresentation {
-                    _ = pb.setData(tiff, forType: .tiff)
-                }
-                _ = pb.setData(imageData, forType: .png)
-            } else {
-                pb.setData(imageData, forType: .png)
-            }
+            // One image representation avoids pasting both a file and an image in rich editors.
+            didWrite = pb.setData(data, forType: .png)
         }
+        showMessage(didWrite ? "已复制，可到其他应用粘贴" : "复制失败，请重试", copied: didWrite ? item.id : nil)
+        return didWrite
     }
 
-    func injectItem(_ item: ClipboardItem) {
+    /// The panel captures its destination when opened. A changed destination becomes copy-only.
+    func pasteItem(_ item: ClipboardItem, targetPID: pid_t?) async -> Bool {
+        guard !isSearching else { showMessage("正在搜索，请稍候"); return false }
+        let result: FocusInjector.DeliveryResult
         switch item.type {
         case .text:
-            guard let text = item.contentText, !text.isEmpty else { return }
-            let targetPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-            Task { @MainActor [weak injector] in
-                _ = await injector?.deliver(
-                    text,
-                    targetPID: targetPID,
-                    restoreClipboard: false
-                )
-            }
+            guard let text = item.contentText else { return false }
+            result = await injector.deliver(text, targetPID: targetPID, restoreClipboard: false)
         case .image:
-            guard let imageData = loadImageData(for: item) else { return }
-            _ = injector.injectImageData(
-                imageData,
-                restoreClipboard: false,
-                originalPath: item.contentOriginalPath
-            )
+            guard let data = imageData(for: item) else {
+                showMessage("图片文件已丢失，无法粘贴")
+                return false
+            }
+            result = await injector.deliverImage(data, targetPID: targetPID)
         }
+        if result.status == .inserted { return true }
+        switch result.status {
+        case .failedClipboardWrite: showMessage("复制失败，请重试")
+        case .copiedSessionSuperseded: showMessage("剪贴板内容已变化，请重新选择记录粘贴")
+        default: showMessage("已复制。请回到目标应用按 ⌘V 粘贴。")
+        }
+        return false
     }
 
-    func activateItem(_ item: ClipboardItem) {
-        switch item.type {
-        case .text:
-            injectItem(item)
-        case .image:
-            if revealImageInFinder(item) {
-                return
-            }
-            injectItem(item)
-        }
+    func showMessage(_ text: String, copied: UUID? = nil) {
+        feedbackWorkItem?.cancel()
+        message = text
+        copiedID = copied
+        let work = DispatchWorkItem { [weak self] in self?.message = nil; self?.copiedID = nil }
+        feedbackWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: work)
+    }
+
+    func sourceName(for item: ClipboardItem) -> String {
+        if item.source == .voiceops { return "inVoice 语音" }
+        guard let bundle = item.appBundleID else { return "系统剪贴板" }
+        if let cached = appNames[bundle] { return cached }
+        let name = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle)
+            .map { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") } ?? "系统剪贴板"
+        appNames[bundle] = name
+        return name
     }
 
     func metaText(for item: ClipboardItem) -> String {
-        let source = item.source == .voiceops ? "inVoice" : "System"
-        let time = relativeTimeString(timestampMs: item.timestamp)
-        if item.type == .image, let meta = imageMeta(for: item) {
-            return "\(source) · \(time) · \(meta)"
+        let date = Date(timeIntervalSince1970: TimeInterval(item.timestamp) / 1000)
+        let age = Date().timeIntervalSince(date)
+        let time = age < 60 ? "刚刚" : relativeFormatter.localizedString(for: date, relativeTo: Date())
+        return "\(sourceName(for: item)) · \(time)"
+    }
+
+    func revealImage(_ item: ClipboardItem) {
+        for path in [item.contentOriginalPath, item.contentImagePath].compactMap({ $0 }) {
+            if FileManager.default.fileExists(atPath: path) {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                return
+            }
         }
-        return "\(source) · \(time)"
+        showMessage("图片文件已丢失，无法在访达中显示")
     }
 
-    private func relativeTimeString(timestampMs: Int64) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(timestampMs) / 1000)
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
-    }
-
-    private func loadImageData(for item: ClipboardItem) -> Data? {
-        guard let path = item.contentImagePath else { return nil }
-        return try? Data(contentsOf: URL(fileURLWithPath: path))
-    }
-
-    private func validFileURL(for item: ClipboardItem) -> URL? {
-        guard let path = item.contentOriginalPath else { return nil }
-        let url = URL(fileURLWithPath: path)
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        return url
-    }
-
-    private func decodedImage(from data: Data) -> NSImage? {
-        if let image = NSImage(data: data) {
-            return image
-        }
-        if let source = CGImageSourceCreateWithData(data as CFData, nil),
-           let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) {
-            return NSImage(cgImage: cgImage, size: .zero)
-        }
-        return nil
-    }
-
-    func previewImage(for item: ClipboardItem) -> NSImage? {
-        guard item.type == .image else { return nil }
-        if let cached = imageCache.object(forKey: item.id as NSUUID) { return cached }
-        guard let path = item.contentImagePath ?? item.contentOriginalPath,
-              let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
-              let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceThumbnailMaxPixelSize: 1000,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceShouldCacheImmediately: true,
-              ] as CFDictionary) else { return nil }
-        let image = NSImage(cgImage: thumbnail, size: .zero)
-        imageCache.setObject(image, forKey: item.id as NSUUID, cost: thumbnail.bytesPerRow * thumbnail.height)
-        return image
-    }
-
-    private func revealImageInFinder(_ item: ClipboardItem) -> Bool {
-        if let url = existingFileURL(item.contentOriginalPath) ?? existingFileURL(item.contentImagePath) {
-            NSWorkspace.shared.activateFileViewerSelecting([url])
-            return true
-        }
-        guard let data = loadImageData(for: item) else { return false }
-        do {
-            let dir = try ensurePreviewDirectory()
-            let fileURL = dir.appendingPathComponent("clipboard_\(UUID().uuidString).png")
-            try data.write(to: fileURL, options: .atomic)
-            NSWorkspace.shared.activateFileViewerSelecting([fileURL])
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    private func existingFileURL(_ path: String?) -> URL? {
-        guard let path else { return nil }
-        let url = URL(fileURLWithPath: path)
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        return url
-    }
-
-    private func ensurePreviewDirectory() throws -> URL {
-        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
-        let dir = (base ?? URL(fileURLWithPath: NSTemporaryDirectory()))
-            .appendingPathComponent("VoiceOps/ClipboardImages", isDirectory: true)
-        if !FileManager.default.fileExists(atPath: dir.path) {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        }
-        return dir
-    }
-
-    private func imageMeta(for item: ClipboardItem) -> String? {
-        if let cached = imageMetaCache[item.id] {
-            return cached
-        }
-        guard let path = item.contentImagePath else { return nil }
-        let url = URL(fileURLWithPath: path)
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? Int,
-              let height = properties[kCGImagePropertyPixelHeight] as? Int else { return nil }
-        let ext = url.pathExtension.isEmpty ? "IMG" : url.pathExtension.uppercased()
-        let meta = "\(ext) · \(width)x\(height)"
-        imageMetaCache[item.id] = meta
-        return meta
+    private func imageData(for item: ClipboardItem) -> Data? {
+        guard let path = item.contentImagePath,
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) > 0 else { return nil }
+        return data
     }
 }

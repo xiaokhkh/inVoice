@@ -108,3 +108,39 @@ swiftc -parse-as-library -O -o /tmp/invoice-local-product-smoke \
 The probe checks transcription, the English dictation prompt, streamed completion,
 missing-model fallback, and direct mode. It uses the installed token without printing
 it. The synthetic speech does not read the microphone or modify the clipboard.
+
+## Clipboard history (0.2.1)
+
+`swift test` includes isolated SQLite tests for literal search, source/type/pin filters,
+exact whitespace preservation, deduplication, 200-clip retention, image deletion and
+undo, cleanup protection, migration, persistence across relaunch, and failed-transaction rollback.
+The pasteboard tests also cover image ownership and cancellation of pending text restoration.
+
+```bash
+./tests/e2e/clipboard_smoke.sh
+```
+
+This compiles the shipping view model and injector. It uses temporary databases,
+named test pasteboards, injected permission checks and a fake event poster; it never
+reads the user's clipboard or posts real keyboard events. It checks stale search
+rejection, success/failure feedback, undo with filters, missing images, focus changes,
+permission fallback, one-time image pasting, and newer clipboard writes.
+
+For native UI verification with synthetic clips:
+
+```bash
+./tests/e2e/clipboard_preview.sh
+```
+
+The script prints a separate app bundle path. Open that bundle to inspect the shipping
+history workspace and quick panel. The preview creates a temporary SQLite store and
+sample image; it does not run sidecars or clipboard capture. Quit the ordinary inVoice
+app first if testing Copy, so it does not capture the synthetic clips. The preview
+restores the original clipboard on exit only if its own fixture still occupies it.
+
+Check: Chinese text/filename search, literal `%` and `_`, clear query, all five filters,
+long-text scrolling, image preview, pin/unpin, per-item delete/undo, cleanup/undo,
+copy feedback, native search editing, arrow navigation, Escape, and fallback messaging.
+Verify the installed app's quick-panel paste against a disposable editor field, including
+image paste and switching applications before delivery. The temporary preview app may
+lack Accessibility permission, in which case it should copy with recovery guidance.

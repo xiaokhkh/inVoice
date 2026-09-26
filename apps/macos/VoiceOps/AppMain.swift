@@ -68,6 +68,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.translatePanel.show(selection: .empty(.noSelection)) }
             .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: .inVoiceOpenHistory)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.openPreferences()
+                NotificationCenter.default.post(name: .inVoiceSelectHistory, object: nil)
+            }
+            .store(in: &cancellables)
         Task { await ProductStatus.shared.waitForStartup() }
         clipboardObserver.start()
         sidecarLauncher.startAll()

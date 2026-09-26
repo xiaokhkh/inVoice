@@ -4,7 +4,7 @@ import SwiftUI
 final class ClipboardHistoryPanel: NSPanel {
     init(rootView: some View) {
         let hosting = NSHostingView(rootView: rootView)
-        let rect = NSRect(x: 0, y: 0, width: 560, height: 420)
+        let rect = NSRect(x: 0, y: 0, width: 600, height: 490)
         super.init(
             contentRect: rect,
             styleMask: [.nonactivatingPanel, .fullSizeContentView],
@@ -27,12 +27,12 @@ final class ClipboardHistoryPanel: NSPanel {
         contentView = hosting
     }
 
-    override var canBecomeKey: Bool { false }
+    override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
     func show() {
         positionCenter()
-        orderFrontRegardless()
+        makeKeyAndOrderFront(nil)
     }
 
     func hide() {

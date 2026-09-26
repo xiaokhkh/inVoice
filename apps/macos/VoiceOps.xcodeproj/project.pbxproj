@@ -58,6 +58,7 @@
 		C92510000000000000000001 /* ProductWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = C92500000000000000000001 /* ProductWorkspace.swift */; };
 		C92510000000000000000002 /* ProductStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = C92500000000000000000002 /* ProductStatus.swift */; };
 		C92510000000000000000003 /* ProductExperience.swift in Sources */ = {isa = PBXBuildFile; fileRef = C92500000000000000000003 /* ProductExperience.swift */; };
+		C92610000000000000000001 /* HistoryWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C92600000000000000000001 /* HistoryWorkspaceView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -114,6 +115,7 @@
 		C92500000000000000000001 /* ProductWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductWorkspace.swift; sourceTree = "<group>"; };
 		C92500000000000000000002 /* ProductStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductStatus.swift; sourceTree = "<group>"; };
 		C92500000000000000000003 /* ProductExperience.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductExperience.swift; sourceTree = "<group>"; };
+		C92600000000000000000001 /* HistoryWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryWorkspaceView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -145,6 +147,7 @@
 		C1B2C3D4E5F6010203040506 /* Clipboard */ = {
 			isa = PBXGroup;
 			children = (
+				C92600000000000000000001 /* HistoryWorkspaceView.swift */,
 				A1B2C3D4E5F6010203040506 /* ClipboardItem.swift */,
 				A1B2C3D4E5F6010203040507 /* ClipboardStore.swift */,
 				A1B2C3D4E5F6010203040508 /* ClipboardObserver.swift */,
@@ -345,6 +348,7 @@
 				B1B2C3D4E5F601020304050C /* ClipboardHistoryView.swift in Sources */,
 				B1B2C3D4E5F6010203040509 /* ClipboardHistoryViewModel.swift in Sources */,
 				B1B2C3D4E5F601020304050D /* ClipboardItemRowView.swift in Sources */,
+				C92610000000000000000001 /* HistoryWorkspaceView.swift in Sources */,
 				B1B2C3D4E5F6010203040506 /* ClipboardItem.swift in Sources */,
 				B1B2C3D4E5F6010203040508 /* ClipboardObserver.swift in Sources */,
 				B1B2C3D4E5F6010203040507 /* ClipboardStore.swift in Sources */,
@@ -411,7 +415,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -429,7 +433,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MARKETING_VERSION = 0.2.0;
+				MARKETING_VERSION = 0.2.1;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -496,7 +500,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -508,7 +512,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MARKETING_VERSION = 0.2.0;
+				MARKETING_VERSION = 0.2.1;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

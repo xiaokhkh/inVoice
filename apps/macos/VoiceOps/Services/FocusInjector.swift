@@ -129,52 +129,21 @@ final class FocusInjector {
         return DeliveryResult(status: .inserted)
     }
 
-    func injectImageData(
-        _ data: Data,
-        restoreClipboard: Bool = false,
-        originalPath: String? = nil
-    ) -> Bool {
-        guard !data.isEmpty, accessibilityGranted() else { return false }
-
-        let pasteboard = NSPasteboard.general
-        let backup = restoreClipboard ? deepCopyItems(pasteboard.pasteboardItems ?? []) : []
-        ClipboardObserver.shared.markInternalWrite(duration: 1.0)
-        pasteboard.clearContents()
-
-        if let originalPath {
-            let url = URL(fileURLWithPath: originalPath)
-            if FileManager.default.fileExists(atPath: url.path) {
-                pasteboard.writeObjects([url as NSURL])
-            }
+    /// Clipboard history images use the same delivery lock and destination checks as text.
+    func deliverImage(_ data: Data, targetPID: pid_t?) async -> DeliveryResult {
+        guard !data.isEmpty else { return DeliveryResult(status: .failedClipboardWrite) }
+        await clipboard.acquireDeliverySlot()
+        defer { clipboard.releaseDeliverySlot() }
+        guard let prepared = clipboard.prepareImageForPaste(data) else {
+            return DeliveryResult(status: .failedClipboardWrite)
         }
-
-        var didSet = false
-        if let image = decodedImage(from: data) {
-            didSet = pasteboard.writeObjects([image])
-            if let tiff = image.tiffRepresentation {
-                _ = pasteboard.setData(tiff, forType: .tiff)
-            }
-            _ = pasteboard.setData(data, forType: .png)
-        } else {
-            didSet = pasteboard.setData(data, forType: .png)
-        }
-        guard didSet else { return false }
-
+        guard accessibilityGranted() else { return DeliveryResult(status: .copiedNoPermission) }
+        guard targetStillMatches(targetPID) else { return DeliveryResult(status: .copiedFocusChanged) }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        guard targetStillMatches(targetPID) else { return DeliveryResult(status: .copiedFocusChanged) }
+        guard clipboard.isUnchanged(since: prepared) else { return DeliveryResult(status: .copiedSessionSuperseded) }
         let vKeyCode = Self.keyCode(forCharacter: "v") ?? CGKeyCode(kVK_ANSI_V)
-        guard pasteEventPoster(vKeyCode) else { return false }
-
-        if restoreClipboard {
-            let expectedChangeCount = pasteboard.changeCount
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
-                guard pasteboard.changeCount == expectedChangeCount else { return }
-                ClipboardObserver.shared.markInternalWrite()
-                pasteboard.clearContents()
-                if !backup.isEmpty {
-                    pasteboard.writeObjects(backup)
-                }
-            }
-        }
-        return true
+        return DeliveryResult(status: pasteEventPoster(vKeyCode) ? .inserted : .copiedEventFailure)
     }
 
     private func targetStillMatches(_ targetPID: pid_t?) -> Bool {
@@ -265,29 +234,6 @@ final class FocusInjector {
             }
             return nil
         }
-    }
-
-    private func deepCopyItems(_ items: [NSPasteboardItem]) -> [NSPasteboardItem] {
-        items.map { item in
-            let copy = NSPasteboardItem()
-            for type in item.types {
-                if let data = item.data(forType: type) {
-                    copy.setData(data, forType: type)
-                }
-            }
-            return copy
-        }
-    }
-
-    private func decodedImage(from data: Data) -> NSImage? {
-        if let image = NSImage(data: data) {
-            return image
-        }
-        if let source = CGImageSourceCreateWithData(data as CFData, nil),
-           let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) {
-            return NSImage(cgImage: cgImage, size: .zero)
-        }
-        return nil
     }
 
     private func trace(_ message: String) {
