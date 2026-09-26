@@ -238,7 +238,7 @@ idf.py -p /dev/cu.usbmodemXXXX flash
 | 已识别但没有插入文字 | 打开辅助功能权限，并保持原目标应用在前台；否则从剪贴板恢复 |
 | 没有选择板载麦克风 | 确认 USB Audio 名称为 `MLX Voice Mic`；新 Session 会自动选择 |
 | 缺少模型或 Python 环境 | 重新运行 `./scripts/install.sh` |
-| Ollama 不可用 | 打开 Ollama，再运行 `ollama pull qwen2.5-coder:7b-instruct-q5_1` |
+| Ollama 不可用 | 打开 Ollama，再运行 `ollama pull qwen3.6:35b-a3b-coding` |
 
 运行日志位于 `~/Library/Logs/VoiceOps/`。
 
@@ -260,7 +260,7 @@ idf.py -p /dev/cu.usbmodemXXXX flash
 | --- | --- | --- |
 | `VOICEOPS_INSTALL_DIR` | `~/Applications` | 当前用户的 App 安装目录 |
 | `VOICEOPS_SETUP_PYTHON` | `python3` | 创建 sidecar 环境所用的 Python |
-| `VOICEOPS_OLLAMA_MODEL` | `qwen2.5-coder:7b-instruct-q5_1` | 安装器准备的 Ollama 模型 |
+| `VOICEOPS_OLLAMA_MODEL` | `qwen3.6:35b-a3b-coding` | 安装器准备的 Ollama 模型 |
 | `ASR_MODEL_ID` | `mlx-community/GLM-ASR-Nano-2512-8bit` | 最终 MLX ASR 模型 |
 | `FAST_ASR_MODEL_DIR` | `models/zipformer` | 流式模型目录 |
 | `FAST_ASR_SAMPLE_RATE` | `16000` | 流式 PCM 采样率 |
@@ -274,7 +274,7 @@ idf.py -p /dev/cu.usbmodemXXXX flash
 | --- | --- | --- |
 | 流式 ASR | sherpa-onnx 中英双语 Zipformer | `models/zipformer/` |
 | 最终 ASR | `mlx-community/GLM-ASR-Nano-2512-8bit` | Hugging Face 缓存 |
-| 文本处理 | `qwen2.5-coder:7b-instruct-q5_1` | Ollama 模型目录 |
+| 文本处理 | `qwen3.6:35b-a3b-coding` | Ollama 模型目录 |
 | 剪贴板历史 | 最近最多 200 项 | `~/Library/Application Support/mlx-voiceops/` |
 | 运行日志 | Sidecar 标准输出与错误 | `~/Library/Logs/VoiceOps/` |
 

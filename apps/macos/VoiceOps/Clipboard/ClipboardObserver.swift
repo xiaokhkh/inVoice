@@ -11,7 +11,7 @@ final class ClipboardObserver {
     private var lastChangeCount: Int
     private var timer: Timer?
     private var ignoreUntil: Date?
-    private var pendingRemoteURLs: Set<String> = []
+    private var defaultsObserver: Any?
 
     init(store: ClipboardStore) {
         self.store = store
@@ -19,15 +19,34 @@ final class ClipboardObserver {
     }
 
     func start() {
+        if defaultsObserver == nil {
+            defaultsObserver = NotificationCenter.default.addObserver(
+                forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+            ) { [weak self] _ in self?.updateCaptureTimer() }
+        }
+        updateCaptureTimer()
+    }
+
+    private func updateCaptureTimer() {
+        let enabled = UserDefaults.standard.object(forKey: ClipboardCapturePolicy.enabledKey) as? Bool ?? true
+        if !enabled {
+            timer?.invalidate()
+            timer = nil
+            return
+        }
         guard timer == nil else { return }
+        lastChangeCount = pasteboard.changeCount
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             self?.poll()
         }
+        timer?.tolerance = 0.15
     }
 
     func stop() {
         timer?.invalidate()
         timer = nil
+        if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
+        defaultsObserver = nil
     }
 
     func markInternalWrite(duration: TimeInterval = 0.6) {
@@ -42,6 +61,10 @@ final class ClipboardObserver {
         if let ignoreUntil, ignoreUntil > Date() {
             return
         }
+
+        let types = Set((pasteboard.types ?? []).map(\.rawValue))
+        let enabled = UserDefaults.standard.object(forKey: ClipboardCapturePolicy.enabledKey) as? Bool ?? true
+        guard ClipboardCapturePolicy.shouldCapture(types: types, enabled: enabled) else { return }
 
         let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
 
@@ -83,10 +106,6 @@ final class ClipboardObserver {
             return (data, nil)
         }
 
-        if let remoteURL = remoteURLFromPasteboard() {
-            fetchRemoteImage(url: remoteURL)
-        }
-
         return nil
     }
 
@@ -119,42 +138,6 @@ final class ClipboardObserver {
             return url
         }
         return nil
-    }
-
-    private func remoteURLFromPasteboard() -> URL? {
-        if let urlString = pasteboard.string(forType: .URL),
-           let url = URL(string: urlString),
-           url.scheme?.hasPrefix("http") == true,
-           isLikelyImageURL(url) {
-            return url
-        }
-        if let urlString = pasteboard.string(forType: .string),
-           let url = URL(string: urlString),
-           url.scheme?.hasPrefix("http") == true,
-           isLikelyImageURL(url) {
-            return url
-        }
-        return nil
-    }
-
-    private func fetchRemoteImage(url: URL) {
-        let key = url.absoluteString
-        guard !pendingRemoteURLs.contains(key) else { return }
-        pendingRemoteURLs.insert(key)
-
-        let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 6)
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
-            guard let self else { return }
-            defer { self.pendingRemoteURLs.remove(key) }
-            guard let data, !data.isEmpty else { return }
-            if let http = response as? HTTPURLResponse, http.statusCode >= 400 { return }
-            if let length = response?.expectedContentLength, length > 12_000_000 { return }
-            if data.count > 12_000_000 { return }
-            if let mime = response?.mimeType, !mime.hasPrefix("image/") { return }
-            guard let imageData = self.pngData(from: data) else { return }
-            self.store.recordSystemImage(imageData, appBundleID: bundleID, originalPath: nil)
-        }.resume()
     }
 
     private func pngData(from image: NSImage) -> Data? {

@@ -6,15 +6,27 @@ final class OfflineLLMClient {
     }
 
     static let modelDefaultsKey = "offlineLLMModel"
-    static let defaultModel = "qwen2.5-coder:7b-instruct-q5_1"
+    static let defaultModel = "qwen3.6:35b-a3b-coding"
+    static let previousDefaultModels = [
+        "qwen3.7-flash",
+        "qwen2.5-coder:7b-instruct-q5_1",
+    ]
 
-    private enum WarmUpState {
-        case idle
-        case running
-        case done
+    private actor WarmUpGate {
+        private var active: Set<String> = []
+        private var completed: [String: Date] = [:]
+        func begin(_ model: String) -> Bool {
+            guard !active.contains(model),
+                  Date().timeIntervalSince(completed[model] ?? .distantPast) > 240 else { return false }
+            active.insert(model)
+            return true
+        }
+        func finish(_ model: String, succeeded: Bool) {
+            active.remove(model)
+            if succeeded { completed[model] = Date() }
+        }
     }
-
-    private static var warmUpState: WarmUpState = .idle
+    private static let warmUpGate = WarmUpGate()
 
     private struct Message: Encodable, Decodable {
         let role: String
@@ -25,10 +37,24 @@ final class OfflineLLMClient {
         let model: String
         let messages: [Message]
         let stream: Bool
+        let think: Bool?
+        let keep_alive = "10m"
     }
 
     private struct ResponseBody: Decodable {
         let message: Message?
+        let totalDuration: Int64?
+        let loadDuration: Int64?
+        let promptEvalDuration: Int64?
+        let evalDuration: Int64?
+
+        enum CodingKeys: String, CodingKey {
+            case message
+            case totalDuration = "total_duration"
+            case loadDuration = "load_duration"
+            case promptEvalDuration = "prompt_eval_duration"
+            case evalDuration = "eval_duration"
+        }
     }
 
     private struct StreamResponseBody: Decodable {
@@ -45,6 +71,15 @@ final class OfflineLLMClient {
         let memoryBytes: Int64?
         let parameterSize: String?
         let quantization: String?
+    }
+
+    struct GenerationResult {
+        let text: String
+        let requestMs: Int
+        let serverTotalMs: Int?
+        let loadMs: Int?
+        let promptEvalMs: Int?
+        let generateMs: Int?
     }
 
     private struct OllamaModelDetails: Decodable {
@@ -87,8 +122,10 @@ final class OfflineLLMClient {
     }
 
     enum PromptProfile {
+        case assistant
         case translation
         case voice
+        case voicePolish
         case action
     }
 
@@ -110,24 +147,42 @@ final class OfflineLLMClient {
         }
         let stored = UserDefaults.standard.string(forKey: Self.modelDefaultsKey) ?? ""
         let trimmed = stored.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? Self.defaultModel : trimmed
+        if trimmed.isEmpty || Self.previousDefaultModels.contains(trimmed) {
+            return Self.defaultModel
+        }
+        return trimmed
     }
 
-    func warmUp() async {
-        if Self.warmUpState != .idle {
-            return
-        }
-        Self.warmUpState = .running
+    func warmUp() async -> Int? {
+        let model = modelName
+        guard await Self.warmUpGate.begin(model) else { return nil }
+        let started = CFAbsoluteTimeGetCurrent()
+        var succeeded = false
         do {
-            _ = try await translate(text: "Hello", profile: .voice)
-            Self.warmUpState = .done
-        } catch {
-            Self.warmUpState = .idle
-        }
+            // Empty prompt loads the model without queuing a throwaway generation.
+            var request = URLRequest(url: baseURL.appendingPathComponent("api/generate"))
+            request.httpMethod = "POST"
+            request.timeoutInterval = 35
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "model": model, "prompt": "", "stream": false, "keep_alive": "10m",
+            ])
+            let (_, response) = try await session.data(for: request)
+            succeeded = (response as? HTTPURLResponse)?.statusCode == 200
+        } catch { succeeded = false }
+        await Self.warmUpGate.finish(model, succeeded: succeeded)
+        return Int((CFAbsoluteTimeGetCurrent() - started) * 1_000)
     }
 
     func translate(text: String, profile: PromptProfile = .translation) async throws -> String {
-        try await chat(
+        try await translateDetailed(text: text, profile: profile).text
+    }
+
+    func translateDetailed(
+        text: String,
+        profile: PromptProfile = .translation
+    ) async throws -> GenerationResult {
+        try await chatDetailed(
             messages: [ChatMessage(role: "user", content: text, applyTemplate: true)],
             profile: profile
         )
@@ -170,6 +225,13 @@ final class OfflineLLMClient {
     }
 
     func chat(messages: [ChatMessage], profile: PromptProfile = .translation) async throws -> String {
+        try await chatDetailed(messages: messages, profile: profile).text
+    }
+
+    func chatDetailed(
+        messages: [ChatMessage],
+        profile: PromptProfile = .translation
+    ) async throws -> GenerationResult {
         var req = URLRequest(url: baseURL.appendingPathComponent("/api/chat"))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -192,11 +254,14 @@ final class OfflineLLMClient {
             messages: [
                 Message(role: "system", content: OfflineLLMClient.loadSystemPrompt(profile: profile))
             ] + mapped,
-            stream: false
+            stream: false,
+            think: false
         )
         req.httpBody = try JSONEncoder().encode(body)
 
+        let started = CFAbsoluteTimeGetCurrent()
         let (data, resp) = try await session.data(for: req)
+        let requestMs = Int((CFAbsoluteTimeGetCurrent() - started) * 1_000)
         guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw OfflineError.invalidResponse
         }
@@ -204,15 +269,23 @@ final class OfflineLLMClient {
         guard let content = decoded.message?.content else {
             throw OfflineError.invalidResponse
         }
-        return stripCodeFence(content).trimmingCharacters(in: .whitespacesAndNewlines)
+        return GenerationResult(
+            text: stripCodeFence(content).trimmingCharacters(in: .whitespacesAndNewlines),
+            requestMs: requestMs,
+            serverTotalMs: Self.milliseconds(decoded.totalDuration),
+            loadMs: Self.milliseconds(decoded.loadDuration),
+            promptEvalMs: Self.milliseconds(decoded.promptEvalDuration),
+            generateMs: Self.milliseconds(decoded.evalDuration)
+        )
     }
 
     func chatStream(
         messages: [ChatMessage],
         profile: PromptProfile = .translation,
-        onDelta: @escaping (String) -> Void
+        onDelta: @MainActor @escaping (String) -> Void
     ) async throws -> String {
         var req = URLRequest(url: baseURL.appendingPathComponent("/api/chat"))
+        req.timeoutInterval = 60
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
@@ -228,7 +301,8 @@ final class OfflineLLMClient {
             messages: [
                 Message(role: "system", content: OfflineLLMClient.loadSystemPrompt(profile: profile))
             ] + mapped,
-            stream: true
+            stream: true,
+            think: false
         )
         req.httpBody = try JSONEncoder().encode(body)
 
@@ -238,10 +312,11 @@ final class OfflineLLMClient {
         }
 
         var buffer = ""
+        var didComplete = false
         for try await line in bytes.lines {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
-            if trimmed == "[DONE]" { break }
+            if trimmed == "[DONE]" { didComplete = true; break }
             let payload = trimmed.hasPrefix("data: ") ? String(trimmed.dropFirst(6)) : trimmed
             guard let data = payload.data(using: .utf8),
                   let decoded = try? JSONDecoder().decode(StreamResponseBody.self, from: data) else {
@@ -249,11 +324,15 @@ final class OfflineLLMClient {
             }
             if let content = decoded.message?.content, !content.isEmpty {
                 buffer += content
-                onDelta(content)
+                await onDelta(content)
             }
             if decoded.done == true {
+                didComplete = true
                 break
             }
+        }
+        guard didComplete, !buffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw OfflineError.invalidResponse
         }
         return stripCodeFence(buffer).trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -275,37 +354,27 @@ final class OfflineLLMClient {
         return inner.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    static let translationSystemPromptDefaultsKey = "offlineTranslationSystemPrompt"
-    static let translationUserPromptDefaultsKey = "offlineTranslationUserPromptTemplate"
+    static let translationSystemPromptDefaultsKey = TranslationPromptDefaults.systemPromptKey
+    static let translationUserPromptDefaultsKey = TranslationPromptDefaults.userPromptKey
+    static let assistantSystemPromptDefaultsKey = "offlineAssistantSystemPrompt"
+    static let assistantUserPromptDefaultsKey = "offlineAssistantUserPromptTemplate"
     static let voiceSystemPromptDefaultsKey = "offlineVoiceSystemPrompt"
     static let voiceUserPromptDefaultsKey = "offlineVoiceUserPromptTemplate"
+    static let voicePolishSystemPromptDefaultsKey = "offlineVoicePolishSystemPrompt"
+    static let voicePolishUserPromptDefaultsKey = "offlineVoicePolishUserPromptTemplate"
     static let actionSystemPromptDefaultsKey = "offlineActionSystemPrompt"
     static let actionUserPromptDefaultsKey = "offlineActionUserPromptTemplate"
 
-    static let defaultTranslationSystemPrompt = """
-You are a Chinese-to-English translator for a programming-focused tool.
+    static let defaultTranslationSystemPrompt = TranslationPromptDefaults.defaultSystemPrompt
+    static let defaultTranslationUserPromptTemplate = TranslationPromptDefaults.defaultUserPromptTemplate
 
-Your job:
-- Translate Chinese into clear, natural English. If the input is already English, polish it for clarity.
-- Keep the meaning exact. Do not invent facts, commands, logs, or technical conclusions.
-- Never translate a person's name, technical term, acronym, or task label by its dictionary meaning.
-- Keep established acronym capitalization, including `TODO`.
-- If an unprotected Chinese personal name appears, transliterate it with Hanyu Pinyin, family name first, title case, and no tone marks.
-- Preserve code identifiers, file paths, URLs, and CLI commands verbatim.
-- Keep numbers, versions, and punctuation intact when possible.
-- Preserve the original tone and level of formality.
-- Use concise, idiomatic English.
-- Return only the translated text. No extra commentary.
-"""
+    static let defaultAssistantSystemPrompt = """
+    You are a concise, capable local assistant. Follow the user's current request directly.
+    Preserve code, paths, URLs, commands, Markdown structure, and established technical terms.
+    Reply in the user's language unless they request another language.
+    """
 
-    static let defaultTranslationUserPromptTemplate = """
-Translate the following Chinese text into English. If it is already English, polish it for clarity while preserving meaning and terminology.
-
-Text:
-<<<
-{{text}}
->>>
-"""
+    static let defaultAssistantUserPromptTemplate = "{{text}}"
 
     static let defaultVoiceSystemPrompt = """
 You convert Chinese voice transcription into clear, natural English.
@@ -325,6 +394,26 @@ Your job:
 
     static let defaultVoiceUserPromptTemplate = """
 Translate the following Chinese speech into concise, natural English. If it is already English, polish it.
+
+Text:
+<<<
+{{text}}
+>>>
+"""
+
+    static let defaultVoicePolishSystemPrompt = """
+Polish speech transcription while preserving its original language and meaning.
+
+Your job:
+- Remove filler words and false starts without deleting useful content.
+- Improve punctuation, grammar, and clarity in the same language as the input.
+- Preserve names, technical terms, code identifiers, file paths, URLs, commands, numbers, and versions exactly.
+- Do not translate, answer, summarize, or execute the request.
+- Return only the polished text.
+"""
+
+    static let defaultVoicePolishUserPromptTemplate = """
+Polish the following speech transcription in its original language.
 
 Text:
 <<<
@@ -356,12 +445,18 @@ Text:
         let key: String
         let fallback: String
         switch profile {
+        case .assistant:
+            key = assistantSystemPromptDefaultsKey
+            fallback = defaultAssistantSystemPrompt
         case .translation:
             key = translationSystemPromptDefaultsKey
             fallback = defaultTranslationSystemPrompt
         case .voice:
             key = voiceSystemPromptDefaultsKey
             fallback = defaultVoiceSystemPrompt
+        case .voicePolish:
+            key = voicePolishSystemPromptDefaultsKey
+            fallback = defaultVoicePolishSystemPrompt
         case .action:
             key = actionSystemPromptDefaultsKey
             fallback = defaultActionSystemPrompt
@@ -375,12 +470,18 @@ Text:
         let key: String
         let fallback: String
         switch profile {
+        case .assistant:
+            key = assistantUserPromptDefaultsKey
+            fallback = defaultAssistantUserPromptTemplate
         case .translation:
             key = translationUserPromptDefaultsKey
             fallback = defaultTranslationUserPromptTemplate
         case .voice:
             key = voiceUserPromptDefaultsKey
             fallback = defaultVoiceUserPromptTemplate
+        case .voicePolish:
+            key = voicePolishUserPromptDefaultsKey
+            fallback = defaultVoicePolishUserPromptTemplate
         case .action:
             key = actionUserPromptDefaultsKey
             fallback = defaultActionUserPromptTemplate
@@ -400,9 +501,13 @@ Text:
 
     private static func makeSession() -> URLSession {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 30
+        config.timeoutIntervalForRequest = 15
+        config.timeoutIntervalForResource = 180
         return URLSession(configuration: config)
+    }
+
+    private static func milliseconds(_ nanoseconds: Int64?) -> Int? {
+        nanoseconds.map { Int($0 / 1_000_000) }
     }
 
     private func get<T: Decodable>(path: String) async throws -> T {

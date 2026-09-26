@@ -27,6 +27,14 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>inVoice uses Bluetooth only to securely configure Wi-Fi on a nearby wireless voice board.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_mlxvoice._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>inVoice connects to your wireless voice board for audio, controls, and firmware updates.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>inVoice needs microphone access only while you dictate.</string>
 </dict>

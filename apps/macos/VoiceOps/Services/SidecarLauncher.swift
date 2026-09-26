@@ -4,6 +4,10 @@ import Network
 final class SidecarLauncher {
     static let shared = SidecarLauncher()
 
+    let localToken: String
+
+    private static let localTokenDefaultsKey = "voiceops.sidecar.localToken"
+
     struct InstallationStatus {
         let sidecarRootPath: String?
         let finalASREnvironmentReady: Bool
@@ -34,25 +38,48 @@ final class SidecarLauncher {
 
     private var processes: [String: Process] = [:]
     private var logHandles: [String: FileHandle] = [:]
+    private var restartAttempts: [String: Int] = [:]
+    private var isStopping = false
+    private let stateLock = NSLock()
     private let checkQueue = DispatchQueue(label: "voiceops.sidecar.check")
 
-    private init() {}
+    private init() {
+        let defaults = UserDefaults.standard
+        if let stored = defaults.string(forKey: Self.localTokenDefaultsKey), !stored.isEmpty {
+            localToken = stored
+        } else {
+            let generated = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+            defaults.set(generated, forKey: Self.localTokenDefaultsKey)
+            localToken = generated
+        }
+    }
 
     func startAll() {
+        stateLock.withLock {
+            isStopping = false
+            restartAttempts.removeAll()
+        }
         Task { await startAllAsync() }
     }
 
     func stopAll() {
-        for (_, process) in processes {
+        let state = stateLock.withLock { () -> ([Process], [FileHandle]) in
+            isStopping = true
+            let running = Array(processes.values)
+            let handles = Array(logHandles.values)
+            processes.removeAll()
+            logHandles.removeAll()
+            restartAttempts.removeAll()
+            return (running, handles)
+        }
+        for process in state.0 {
             if process.isRunning {
                 process.terminate()
             }
         }
-        processes.removeAll()
-        for (_, handle) in logHandles {
+        for handle in state.1 {
             try? handle.close()
         }
-        logHandles.removeAll()
     }
 
     func installationStatus() -> InstallationStatus {
@@ -103,9 +130,12 @@ final class SidecarLauncher {
         }
         let repoRoot = root.deletingLastPathComponent()
         for sidecar in sidecars {
-            let isUp = await isPortOpen(sidecar.port)
-            if isUp {
+            if await isExpectedServiceUp(sidecar) {
                 print("[sidecar] already_running \(sidecar.name)")
+                continue
+            }
+            if await isPortOpen(sidecar.port) {
+                print("[sidecar] port_conflict \(sidecar.name) port=\(sidecar.port)")
                 continue
             }
             start(sidecar, root: root, repoRoot: repoRoot)
@@ -123,6 +153,10 @@ final class SidecarLauncher {
             print("[sidecar] python_missing \(sidecar.name)")
             return
         }
+        let mayStart = stateLock.withLock {
+            !isStopping && processes[sidecar.name] == nil
+        }
+        guard mayStart else { return }
 
         let process = Process()
         process.executableURL = pythonURL
@@ -133,25 +167,91 @@ final class SidecarLauncher {
         if let handle = logHandle(for: logURL) {
             process.standardOutput = handle
             process.standardError = handle
-            logHandles[sidecar.name] = handle
+            stateLock.withLock {
+                logHandles[sidecar.name] = handle
+            }
         }
-        process.terminationHandler = { [weak self] proc in
-            print("[sidecar] exited \(sidecar.name) code=\(proc.terminationStatus)")
-            self?.processes.removeValue(forKey: sidecar.name)
+        process.terminationHandler = { [weak self] terminatedProcess in
+            self?.handleTermination(
+                sidecar,
+                root: root,
+                repoRoot: repoRoot,
+                process: terminatedProcess
+            )
         }
 
         do {
+            stateLock.withLock {
+                processes[sidecar.name] = process
+            }
             try process.run()
-            processes[sidecar.name] = process
             print("[sidecar] started \(sidecar.name) pid=\(process.processIdentifier)")
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10) { [weak self, weak process] in
+                guard let self, let process, process.isRunning else { return }
+                self.stateLock.withLock {
+                    if self.processes[sidecar.name] === process {
+                        self.restartAttempts[sidecar.name] = 0
+                    }
+                }
+            }
         } catch {
+            stateLock.withLock {
+                if processes[sidecar.name] === process {
+                    processes.removeValue(forKey: sidecar.name)
+                }
+                if let handle = logHandles.removeValue(forKey: sidecar.name) {
+                    try? handle.close()
+                }
+            }
             print("[sidecar] start_failed \(sidecar.name) error=\(error)")
+            scheduleRestart(sidecar, root: root, repoRoot: repoRoot)
+        }
+    }
+
+    private func handleTermination(
+        _ sidecar: Sidecar,
+        root: URL,
+        repoRoot: URL,
+        process: Process
+    ) {
+        let shouldRestart = stateLock.withLock { () -> Bool in
+            if processes[sidecar.name] === process {
+                processes.removeValue(forKey: sidecar.name)
+            }
+            if let handle = logHandles.removeValue(forKey: sidecar.name) {
+                try? handle.close()
+            }
+            return !isStopping
+        }
+        print("[sidecar] exited \(sidecar.name) code=\(process.terminationStatus)")
+        if shouldRestart {
+            scheduleRestart(sidecar, root: root, repoRoot: repoRoot)
+        }
+    }
+
+    private func scheduleRestart(_ sidecar: Sidecar, root: URL, repoRoot: URL) {
+        let attempt = stateLock.withLock { () -> Int? in
+            guard !isStopping else { return nil }
+            let next = (restartAttempts[sidecar.name] ?? 0) + 1
+            guard next <= 3 else { return nil }
+            restartAttempts[sidecar.name] = next
+            return next
+        }
+        guard let attempt else {
+            print("[sidecar] restart_exhausted \(sidecar.name)")
+            return
+        }
+        let delay = 1 << (attempt - 1)
+        print("[sidecar] restart_scheduled \(sidecar.name) attempt=\(attempt) delay=\(delay)s")
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + .seconds(delay)) { [weak self] in
+            self?.start(sidecar, root: root, repoRoot: repoRoot)
         }
     }
 
     private func buildEnvironment(for sidecar: Sidecar, root: URL, repoRoot: URL) -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["PYTHONUNBUFFERED"] = "1"
+        env["VOICEOPS_LOCAL_TOKEN"] = localToken
         if sidecar.name == "fast_asr" {
             let modelDir = repoRoot.appendingPathComponent("models/zipformer", isDirectory: true)
             if FileManager.default.fileExists(atPath: modelDir.path) {
@@ -258,6 +358,7 @@ final class SidecarLauncher {
     }
 
     private func logHandle(for url: URL) -> FileHandle? {
+        rotateAndCleanLog(at: url)
         if !FileManager.default.fileExists(atPath: url.path) {
             FileManager.default.createFile(atPath: url.path, contents: nil)
         }
@@ -268,6 +369,35 @@ final class SidecarLauncher {
         } catch {
             print("[sidecar] log_open_failed path=\(url.path) error=\(error)")
             return nil
+        }
+    }
+
+    private func rotateAndCleanLog(at activeURL: URL) {
+        let fileManager = FileManager.default
+        let maximumBytes = 50 * 1024 * 1024
+        if let values = try? activeURL.resourceValues(forKeys: [.fileSizeKey]),
+           (values.fileSize ?? 0) >= maximumBytes {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyyMMdd-HHmmss"
+            let stem = activeURL.deletingPathExtension().lastPathComponent
+            let rotated = activeURL.deletingLastPathComponent().appendingPathComponent(
+                "\(stem)_\(formatter.string(from: Date()))_\(UUID().uuidString.prefix(8)).log"
+            )
+            try? fileManager.moveItem(at: activeURL, to: rotated)
+        }
+
+        let cutoff = Date().addingTimeInterval(-14 * 24 * 60 * 60)
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: activeURL.deletingLastPathComponent(),
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        for file in files where file.lastPathComponent.hasPrefix("sidecar_") && file != activeURL {
+            guard let values = try? file.resourceValues(forKeys: [.contentModificationDateKey]),
+                  let modified = values.contentModificationDate,
+                  modified < cutoff else { continue }
+            try? fileManager.removeItem(at: file)
         }
     }
 
@@ -297,6 +427,24 @@ final class SidecarLauncher {
                 finish(false)
             }
         }
+    }
+
+    private func isExpectedServiceUp(_ sidecar: Sidecar) async -> Bool {
+        guard let url = URL(string: "http://127.0.0.1:\(sidecar.port)/health") else {
+            return false
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 0.5
+        request.setValue("Bearer \(localToken)", forHTTPHeaderField: "Authorization")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse,
+              http.statusCode == 200,
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return false
+        }
+        let expectedService = sidecar.name == "fast_asr" ? "voiceops-fast-asr" : "voiceops-asr-mlx"
+        return payload["service"] as? String == expectedService
+            && payload["protocol_version"] as? Int == 1
     }
 }
 

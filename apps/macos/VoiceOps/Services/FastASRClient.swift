@@ -3,12 +3,14 @@ import Foundation
 final class FastASRClient {
     private let baseURL = URL(string: "http://127.0.0.1:8790")!
     private let session: URLSession
+    private let token: String
 
-    init() {
+    init(token: String = SidecarLauncher.shared.localToken) {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 6
         config.timeoutIntervalForResource = 6
         self.session = URLSession(configuration: config)
+        self.token = token
     }
 
     struct StartResp: Decodable {
@@ -37,6 +39,7 @@ final class FastASRClient {
     func startSession() async throws -> String {
         var req = URLRequest(url: baseURL.appendingPathComponent("/v1/fast_asr/start"))
         req.httpMethod = "POST"
+        authorize(&req)
         let (data, resp) = try await session.data(for: req)
         try validate(resp: resp)
         return try JSONDecoder().decode(StartResp.self, from: data).session_id
@@ -50,6 +53,7 @@ final class FastASRClient {
         )
         var req = URLRequest(url: baseURL.appendingPathComponent("/v1/fast_asr/push"))
         req.httpMethod = "POST"
+        authorize(&req)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONEncoder().encode(payload)
 
@@ -63,6 +67,7 @@ final class FastASRClient {
         let payload = EndReq(session_id: sessionID)
         var req = URLRequest(url: baseURL.appendingPathComponent("/v1/fast_asr/end"))
         req.httpMethod = "POST"
+        authorize(&req)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONEncoder().encode(payload)
 
@@ -75,5 +80,9 @@ final class FastASRClient {
         guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw NSError(domain: "FastASRClient", code: 1)
         }
+    }
+
+    private func authorize(_ request: inout URLRequest) {
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     }
 }

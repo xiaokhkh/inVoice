@@ -2,8 +2,8 @@ name: VoiceOps
 options:
   bundleIdPrefix: com.voiceops
 settings:
-  MARKETING_VERSION: 0.1.0
-  CURRENT_PROJECT_VERSION: 1
+  MARKETING_VERSION: 0.2.0
+  CURRENT_PROJECT_VERSION: 2
 schemes:
   VoiceOps:
     build:
@@ -19,12 +19,17 @@ targets:
     deploymentTarget: "13.0"
     sources:
       - path: VoiceOps
+      - path: VoiceOpsCore
     resources:
       - path: VoiceOps/Assets.xcassets
     info:
       path: VoiceOps/Info.plist
       properties:
         CFBundleDisplayName: inVoice
+        NSBluetoothAlwaysUsageDescription: inVoice uses Bluetooth only to securely configure Wi-Fi on a nearby wireless voice board.
+        NSBonjourServices:
+          - _mlxvoice._tcp
+        NSLocalNetworkUsageDescription: inVoice connects to your wireless voice board for audio, controls, and firmware updates.
         NSMicrophoneUsageDescription: inVoice needs microphone access only while you dictate.
         LSUIElement: true
         NSAppTransportSecurity:

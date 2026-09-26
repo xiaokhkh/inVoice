@@ -15,7 +15,6 @@ final class PipelineController: ObservableObject {
 
     private enum ActiveSession {
         case manual
-        case streaming
         case polish
     }
 
@@ -28,19 +27,10 @@ final class PipelineController: ObservableObject {
     private let llm = OfflineLLMClient()
     private let injector = InputInjector()
     private let audio = AudioCaptureService()
-    private let streamingStabilizer = TextStabilizer(confirmations: 2)
     private var targetApp: NSRunningApplication?
     private var activeSession: ActiveSession?
-    private var endRequested = false
-    private let chunkDuration: TimeInterval = 2.0
     private var manualTask: Task<Void, Never>?
     private var polishTask: Task<Void, Never>?
-    private var streamingStartTask: Task<Void, Never>?
-    private var streamingStopTask: Task<Void, Never>?
-    private var streamingTask: Task<Void, Never>?
-    private var streamingTickPending = false
-    private var streamingForcePending = false
-    private var lastStreamingFrameCount: AVAudioFramePosition = 0
 
     func toggleRecord() {
         switch state {
@@ -67,19 +57,8 @@ final class PipelineController: ObservableObject {
         }
         manualTask?.cancel()
         polishTask?.cancel()
-        streamingStartTask?.cancel()
-        streamingStopTask?.cancel()
-        streamingTask?.cancel()
         manualTask = nil
         polishTask = nil
-        streamingStartTask = nil
-        streamingStopTask = nil
-        streamingTask = nil
-        streamingTickPending = false
-        streamingForcePending = false
-        lastStreamingFrameCount = 0
-        streamingStabilizer.reset()
-        endRequested = false
         activeSession = nil
         transcript = ""
         output = ""
@@ -99,22 +78,6 @@ final class PipelineController: ObservableObject {
             }
             state = .idle
             targetApp = nil
-        }
-    }
-
-    func startStreaming() {
-        guard streamingStartTask == nil else { return }
-        streamingStartTask = Task { @MainActor [weak self] in
-            await self?.startStreamingSession()
-            self?.streamingStartTask = nil
-        }
-    }
-
-    func stopStreaming() {
-        guard streamingStopTask == nil else { return }
-        streamingStopTask = Task { @MainActor [weak self] in
-            await self?.stopStreamingSession()
-            self?.streamingStopTask = nil
         }
     }
 
@@ -158,6 +121,7 @@ final class PipelineController: ObservableObject {
     private func stopAndProcess() async {
         do {
             let wavURL = try audio.stop()
+            defer { try? FileManager.default.removeItem(at: wavURL) }
             state = .transcribing
             transcript = try await asr.transcribe(wavURL: wavURL)
 
@@ -169,135 +133,6 @@ final class PipelineController: ObservableObject {
         } catch {
             state = .error("Pipeline failed: \(error)")
         }
-    }
-
-    private func startStreamingSession() async {
-        switch state {
-        case .idle, .ready, .error:
-            break
-        default:
-            return
-        }
-        let granted = await Permissions.requestMicrophoneIfNeeded()
-        guard granted else {
-            state = .error("Microphone permission denied")
-            return
-        }
-
-        transcript = ""
-        output = ""
-        activeSession = .streaming
-        endRequested = false
-        streamingTickPending = false
-        streamingForcePending = false
-        lastStreamingFrameCount = 0
-        streamingStabilizer.reset()
-
-        targetApp = nil
-
-        do {
-            try audio.start(streaming: true, chunkDuration: chunkDuration) { [weak self] in
-                self?.handleStreamingTick(force: false)
-            }
-            state = .recording
-            print("[stream] start")
-        } catch {
-            state = .error("Audio start failed: \(error)")
-        }
-    }
-
-    private func stopStreamingSession() async {
-        guard activeSession == .streaming else { return }
-        endRequested = true
-        do {
-            try audio.stopStreaming()
-        } catch {
-            state = .error("Audio stop failed: \(error)")
-            finishStreaming(resetAudio: true)
-            return
-        }
-        handleStreamingTick(force: true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            guard let self else { return }
-            if self.endRequested, self.streamingTask == nil {
-                self.finishStreaming(resetAudio: true)
-            }
-        }
-        print("[stream] stop")
-    }
-
-    private func finishStreaming(resetAudio: Bool) {
-        endRequested = false
-        activeSession = nil
-        state = .idle
-        targetApp = nil
-        if resetAudio {
-            audio.resetStreamingState()
-        }
-    }
-
-    private func handleStreamingTick(force: Bool) {
-        guard activeSession == .streaming else { return }
-        if force {
-            streamingForcePending = true
-        }
-        if streamingTask != nil {
-            streamingTickPending = true
-            return
-        }
-        let shouldForce = streamingForcePending
-        streamingForcePending = false
-        streamingTask = Task { @MainActor [weak self] in
-            await self?.runStreamingTranscription(force: shouldForce)
-        }
-    }
-
-    private func runStreamingTranscription(force: Bool) async {
-        defer {
-            streamingTask = nil
-            let reschedule = streamingTickPending || streamingForcePending
-            let nextForce = streamingForcePending
-            streamingTickPending = false
-            streamingForcePending = false
-            if reschedule {
-                handleStreamingTick(force: nextForce)
-            } else if endRequested {
-                finishStreaming(resetAudio: true)
-            }
-        }
-
-        do {
-            guard let snapshot = try await audio.snapshotStreamingAudio() else { return }
-            let url = snapshot.0
-            let frameCount = snapshot.1
-            if frameCount == lastStreamingFrameCount, !force {
-                try? FileManager.default.removeItem(at: url)
-                return
-            }
-            lastStreamingFrameCount = frameCount
-
-            let text = try await asr.transcribe(wavURL: url)
-            try? FileManager.default.removeItem(at: url)
-            await appendStreamingText(text, forceCommit: force)
-        } catch {
-            state = .error("Streaming failed: \(error)")
-            endRequested = false
-        }
-    }
-
-    private func appendStreamingText(_ text: String, forceCommit: Bool) async {
-        guard activeSession == .streaming else { return }
-        let delta = forceCommit
-            ? streamingStabilizer.forceCommit(text)
-            : streamingStabilizer.update(text)
-        guard !delta.isEmpty else { return }
-        transcript += delta
-
-        let didInject = injector.insertViaPaste(delta, restoreClipboard: false)
-        if !didInject {
-            _ = injector.insertViaTyping(delta)
-        }
-        print("[stream] asr=\(text.count) delta=\(delta.count) force=\(forceCommit)")
     }
 
     private func startPolishSession() async {
@@ -336,6 +171,7 @@ final class PipelineController: ObservableObject {
         guard activeSession == .polish else { return }
         do {
             let wavURL = try audio.stop()
+            defer { try? FileManager.default.removeItem(at: wavURL) }
             state = .transcribing
             transcript = try await asr.transcribe(wavURL: wavURL)
 

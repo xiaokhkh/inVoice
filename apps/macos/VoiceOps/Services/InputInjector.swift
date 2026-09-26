@@ -2,6 +2,24 @@ import Cocoa
 import ApplicationServices
 
 final class InputInjector {
+    func pressReturn() -> Bool {
+        guard Permissions.hasAccessibility() else { return false }
+        let source = CGEventSource(stateID: .combinedSessionState)
+        let returnKey: CGKeyCode = 36
+        guard let keyDown = CGEvent(
+            keyboardEventSource: source,
+            virtualKey: returnKey,
+            keyDown: true
+        ), let keyUp = CGEvent(
+            keyboardEventSource: source,
+            virtualKey: returnKey,
+            keyDown: false
+        ) else { return false }
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+        return true
+    }
+
     func insertViaPaste(_ text: String, restoreClipboard: Bool = true) -> Bool {
         guard Permissions.hasAccessibility() else { return false }
 

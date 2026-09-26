@@ -21,9 +21,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var dictationMenuItem: NSMenuItem?
     private var setupSummaryMenuItem: NSMenuItem?
+    private var deviceInputMenuItem: NSMenuItem?
+    private var deviceAudioMenuItem: NSMenuItem?
     private var panel: OverlayPanel?
     private var previewPanel: PreviewPanel?
     private let previewModel = PreviewModel()
+    private var previewDismissWorkItem: DispatchWorkItem?
+    private var previewMergeInFlight = false
     private var clipboardHotKeyPreference = HotKeyPreference.defaultValue
     private var activationPreference = ActivationKeyPreference.defaultValue
     private var translateHotKeyPreference = TranslateHotKeyPreference.defaultValue
@@ -32,17 +36,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var preferencesHotKey: HotKeyService?
     private let fnMonitor = FnKeyMonitor()
     private let fnSession = FnSessionController()
+    private let wirelessVoiceProvider = WirelessVoiceProvider.shared
+    private let deviceManager = DeviceManager.shared
     private let clipboardObserver = ClipboardObserver.shared
     private let clipboardPanel = ClipboardHistoryPanelController.shared
     private let translatePanel = SelectionTranslationPanelController.shared
     private let sidecarLauncher = SidecarLauncher.shared
     private let selectionCapture = SelectionCaptureService.shared
+    private let inputInjector = InputInjector()
     private var fnHoldActive = false
+    private var activeVoiceProvider: VoiceInputProvider?
+    private var wirelessCaptureReady = false
+    private var wirelessReleasePending = false
+    private var pendingWirelessAudio: [WirelessVoiceAudioPacket] = []
     private var cancellables = Set<AnyCancellable>()
 
     private let pipeline = PipelineController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        TranslationPromptDefaults.migrateIfNeeded()
         NSApp.setActivationPolicy(.accessory)
         setupStatusItem()
         setupOverlay()
@@ -50,7 +62,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         setupShortcuts()
         setupPreferencesHotKey()
         setupFnMonitor()
+        setupWirelessVoiceProvider()
         bindPipeline()
+        NotificationCenter.default.publisher(for: .inVoiceOpenAssistant)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.translatePanel.show(selection: .empty(.noSelection)) }
+            .store(in: &cancellables)
+        Task { await ProductStatus.shared.waitForStartup() }
         clipboardObserver.start()
         sidecarLauncher.startAll()
 
@@ -59,13 +77,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if isFirstRun {
             defaults.set(true, forKey: didShowWelcomeKey)
         }
-        if isFirstRun
+
+        #if DEBUG
+        let isTranslationPanelPreview =
+            ProcessInfo.processInfo.environment["INVOICE_TRANSLATION_PANEL_PREVIEW"] == "1"
+                || defaults.bool(forKey: "INVOICE_TRANSLATION_PANEL_PREVIEW")
+        let isAudioInputPreview =
+            ProcessInfo.processInfo.environment["INVOICE_AUDIO_INPUT_PREVIEW"] == "1"
+                || defaults.bool(forKey: "INVOICE_AUDIO_INPUT_PREVIEW")
+        #else
+        let isTranslationPanelPreview = false
+        let isAudioInputPreview = false
+        #endif
+
+        let launchedAtLogin = NSAppleEventManager.shared().currentAppleEvent?
+            .paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+        if !isTranslationPanelPreview && !isAudioInputPreview && (isFirstRun || !launchedAtLogin
             || ProcessInfo.processInfo.environment["INVOICE_OPEN_SETTINGS"] == "1"
-            || ProcessInfo.processInfo.environment["VOICEOPS_OPEN_PREFERENCES"] == "1" {
+            || ProcessInfo.processInfo.environment["VOICEOPS_OPEN_PREFERENCES"] == "1") {
             DispatchQueue.main.async { [weak self] in
                 self?.openPreferences()
             }
         }
+
+        #if DEBUG
+        if isAudioInputPreview {
+            let previewState = defaults.string(forKey: "INVOICE_AUDIO_INPUT_PREVIEW_STATE") ?? "live"
+            previewPanel?.resetToListening()
+            switch previewState {
+            case "compact":
+                previewModel.text = ""
+                previewModel.state = .recording
+            case "processing":
+                previewModel.text = "哈喽，哈喽"
+                previewModel.state = .processing
+            case "result":
+                previewModel.text = "哈喽哈喽"
+                previewModel.state = .result
+            default:
+                previewModel.text = "哈喽，哈喽"
+                previewModel.state = .recording
+            }
+            previewPanel?.update(text: previewModel.text, state: previewModel.state, animated: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.previewPanel?.show()
+            }
+        } else if isTranslationPanelPreview {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.translatePanel.showPreview()
+            }
+        }
+        #endif
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -80,18 +142,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = statusIdleTitle
-        item.button?.toolTip = "inVoice · Private voice tools"
+        item.button?.toolTip = "inVoice · 本地语音工作台"
 
         let menu = NSMenu()
         menu.delegate = self
 
-        let dictationItem = NSMenuItem(title: "Start Dictation…", action: #selector(toggleDictation), keyEquivalent: "")
-        let clipboardItem = NSMenuItem(title: "Clipboard History…", action: #selector(showClipboardHistory), keyEquivalent: "")
-        let translateItem = NSMenuItem(title: "Translate Selection…", action: #selector(translateSelection), keyEquivalent: "")
+        let dictationItem = NSMenuItem(title: "开始听写…", action: #selector(toggleDictation), keyEquivalent: "")
+        let clipboardItem = NSMenuItem(title: "剪贴板历史…", action: #selector(showClipboardHistory), keyEquivalent: "")
+        let translateItem = NSMenuItem(title: "打开本地助手…", action: #selector(translateSelection), keyEquivalent: "")
         let setupItem = NSMenuItem(title: setupSummary, action: nil, keyEquivalent: "")
-        let preferencesItem = NSMenuItem(title: "inVoice Settings…", action: #selector(openPreferences), keyEquivalent: ",")
-        let revealItem = NSMenuItem(title: "Reveal App in Finder", action: #selector(revealApp), keyEquivalent: "")
-        let quitItem = NSMenuItem(title: "Quit inVoice", action: #selector(quitApp), keyEquivalent: "q")
+        let inputItem = NSMenuItem(title: deviceManager.inputSourceSummary, action: nil, keyEquivalent: "")
+        let audioItem = NSMenuItem(title: deviceManager.audioSummary, action: nil, keyEquivalent: "")
+        let preferencesItem = NSMenuItem(title: "打开 inVoice…", action: #selector(openPreferences), keyEquivalent: ",")
+        let revealItem = NSMenuItem(title: "在 Finder 中显示应用", action: #selector(revealApp), keyEquivalent: "")
+        let quitItem = NSMenuItem(title: "退出 inVoice", action: #selector(quitApp), keyEquivalent: "q")
 
         dictationItem.target = self
         clipboardItem.target = self
@@ -100,12 +164,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         revealItem.target = self
         quitItem.target = self
         setupItem.isEnabled = false
+        inputItem.isEnabled = false
+        audioItem.isEnabled = false
 
         menu.addItem(dictationItem)
         menu.addItem(clipboardItem)
         menu.addItem(translateItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(setupItem)
+        menu.addItem(inputItem)
+        menu.addItem(audioItem)
         menu.addItem(preferencesItem)
         menu.addItem(revealItem)
         menu.addItem(NSMenuItem.separator())
@@ -115,6 +183,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem = item
         dictationMenuItem = dictationItem
         setupSummaryMenuItem = setupItem
+        deviceInputMenuItem = inputItem
+        deviceAudioMenuItem = audioItem
     }
 
     private func setupOverlay() {
@@ -131,7 +201,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func setupPreviewPanel() {
-        let view = PreviewView(model: previewModel)
+        let view = PreviewView(
+            model: previewModel,
+            onDismiss: { [weak self] in
+                self?.dismissPreviewResult()
+            },
+            onCopy: { [weak self] text in
+                self?.copyPreviewText(text)
+            },
+            onOpenSettings: { [weak self] in
+                self?.dismissPreviewResult()
+                self?.openPreferences()
+                NotificationCenter.default.post(name: .inVoiceOpenDiagnostics, object: nil)
+            }
+        )
         previewPanel = PreviewPanel(rootView: view)
     }
 
@@ -211,7 +294,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.updateStatusIndicator(state)
         }
         fnSession.onPreviewText = { [weak self] text in
-            self?.previewModel.text = text
+            guard let self else { return }
+            self.previewModel.text = text
+            self.previewPanel?.update(text: text, state: .recording)
+        }
+        fnSession.onFinalText = { [weak self] text in
+            guard let self else { return }
+            self.previewDismissWorkItem?.cancel()
+            self.previewModel.text = text
+            self.previewModel.state = .processing
+            self.previewPanel?.update(text: text, state: .processing)
+            self.previewPanel?.show()
+        }
+        fnSession.onDeliveryResult = { [weak self] status in
+            guard let self else { return }
+            if status.didPostPaste {
+                self.mergePreviewIntoTarget()
+            } else {
+                self.previewMergeInFlight = false
+                self.previewModel.state = .result
+                self.previewPanel?.update(text: self.previewModel.text, state: .result)
+                self.previewPanel?.show()
+                self.schedulePreviewResultDismissal()
+            }
+        }
+        fnSession.onFailure = { [weak self] message in
+            guard let self else { return }
+            self.previewMergeInFlight = false
+            self.previewModel.state = .failure
+            self.previewModel.text = self.compactPreviewFailure(message)
+            self.previewPanel?.update(text: self.previewModel.text, state: .failure)
+            self.setStatusTitle("inVoice !")
+            self.previewPanel?.show()
+            self.schedulePreviewResultDismissal()
         }
         if Permissions.hasInputMonitoring() {
             fnMonitor.start()
@@ -219,28 +334,128 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func handleFnDown() {
-        guard !fnHoldActive else { return }
+        beginVoiceHold(provider: .usbAudio)
+    }
+
+    private func handleFnUp() {
+        endVoiceHold(provider: .usbAudio)
+    }
+
+    private func setupWirelessVoiceProvider() {
+        wirelessVoiceProvider.onPTTChanged = { [weak self] pressed in
+            guard let self else { return }
+            if pressed {
+                self.beginVoiceHold(provider: .wirelessStopWatch)
+            } else {
+                self.endVoiceHold(provider: .wirelessStopWatch)
+            }
+        }
+        wirelessVoiceProvider.onAudioPacket = { [weak self] packet in
+            self?.handleWirelessAudio(packet)
+        }
+        wirelessVoiceProvider.onControl = { [weak self] control in
+            switch control {
+            case "clipboard":
+                self?.clipboardPanel.toggle()
+            case "return":
+                _ = self?.inputInjector.pressReturn()
+            default:
+                break
+            }
+        }
+        wirelessVoiceProvider.onConnectionState = { [weak self] state in
+            NSLog("VoiceOps: wireless provider state=%@", String(describing: state))
+            self?.deviceManager.handleConnectionState(state)
+        }
+        wirelessVoiceProvider.onAudioStateChanged = { [weak self] state in
+            self?.deviceManager.handleAudioState(state)
+        }
+        deviceManager.start()
+    }
+
+    private func beginVoiceHold(provider: VoiceInputProvider) {
+        guard activeVoiceProvider == nil else { return }
+        activeVoiceProvider = provider
         fnHoldActive = true
+        if provider == .wirelessStopWatch {
+            wirelessCaptureReady = false
+            wirelessReleasePending = false
+            pendingWirelessAudio.removeAll(keepingCapacity: true)
+        }
+        previewMergeInFlight = false
+        previewDismissWorkItem?.cancel()
         clipboardPanel.hide()
         panel?.hide()
         previewModel.text = ""
         previewModel.state = .recording
+        previewPanel?.resetToListening()
         previewPanel?.show()
         Task { [weak self] in
             guard let self else { return }
-            let started = await self.fnSession.startSession()
-            if !started, self.fnHoldActive {
-                self.fnHoldActive = false
-                self.previewModel.state = .idle
-                self.previewPanel?.hide()
+            let started = await self.fnSession.startSession(provider: provider)
+            guard self.activeVoiceProvider == provider else { return }
+            guard started else {
+                self.resetVoiceHold(provider: provider)
+                return
+            }
+            if provider == .wirelessStopWatch {
+                self.wirelessCaptureReady = true
+                let buffered = self.pendingWirelessAudio
+                self.pendingWirelessAudio.removeAll(keepingCapacity: true)
+                for packet in buffered {
+                    self.fnSession.appendWirelessAudio(packet)
+                }
+                if self.wirelessReleasePending {
+                    self.finishVoiceHold(provider: provider)
+                }
             }
         }
     }
 
-    private func handleFnUp() {
-        guard fnHoldActive else { return }
+    private func endVoiceHold(provider: VoiceInputProvider) {
+        guard activeVoiceProvider == provider else { return }
+        if provider == .wirelessStopWatch, !wirelessCaptureReady {
+            wirelessReleasePending = true
+            return
+        }
+        finishVoiceHold(provider: provider)
+    }
+
+    private func finishVoiceHold(provider: VoiceInputProvider) {
+        guard activeVoiceProvider == provider else { return }
+        activeVoiceProvider = nil
         fnHoldActive = false
+        wirelessCaptureReady = false
+        wirelessReleasePending = false
+        pendingWirelessAudio.removeAll(keepingCapacity: true)
         fnSession.endSession()
+    }
+
+    private func resetVoiceHold(provider: VoiceInputProvider) {
+        guard activeVoiceProvider == provider else { return }
+        activeVoiceProvider = nil
+        fnHoldActive = false
+        wirelessCaptureReady = false
+        wirelessReleasePending = false
+        pendingWirelessAudio.removeAll(keepingCapacity: true)
+        if previewModel.state != .failure {
+            previewModel.state = .idle
+            previewPanel?.hide()
+        }
+    }
+
+    private func handleWirelessAudio(_ packet: WirelessVoiceAudioPacket) {
+        guard activeVoiceProvider == .wirelessStopWatch else { return }
+        if wirelessCaptureReady {
+            fnSession.appendWirelessAudio(packet)
+            return
+        }
+        // Selection capture happens before audio capture starts. Keep up to ten
+        // seconds of 20 ms frames so a quick wireless press is still complete.
+        if pendingWirelessAudio.count >= 500 {
+            pendingWirelessAudio.removeFirst()
+        }
+        pendingWirelessAudio.append(packet)
     }
 
     private func handleTranslateSelection() {
@@ -261,19 +476,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateStatusIndicator(_ state: FnSessionController.IndicatorState) {
         switch state {
+        case .idle: ProductStatus.shared.phase = "准备就绪"
+        case .recording: ProductStatus.shared.phase = "正在聆听…"
+        case .processing: ProductStatus.shared.phase = "正在整理…"
+        }
+        switch state {
         case .idle:
-            previewModel.state = .idle
             setStatusTitle(statusIdleTitle)
-            if !fnHoldActive {
+            if previewMergeInFlight {
+                break
+            } else if (previewModel.state == .result || previewModel.state == .failure), !previewModel.text.isEmpty {
+                schedulePreviewResultDismissal()
+            } else if !fnHoldActive {
+                previewModel.state = .idle
                 previewPanel?.hide()
             }
         case .recording:
             previewModel.state = .recording
+            previewPanel?.update(text: previewModel.text, state: .recording)
             setStatusTitle("inVoice •")
         case .processing:
             previewModel.state = .processing
+            previewPanel?.update(text: previewModel.text, state: .processing)
             setStatusTitle("inVoice …")
         }
+    }
+
+    private func schedulePreviewResultDismissal() {
+        previewDismissWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.dismissPreviewResult()
+        }
+        previewDismissWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + (previewModel.state == .failure ? 12 : 8), execute: workItem)
+    }
+
+    private func dismissPreviewResult() {
+        previewDismissWorkItem?.cancel()
+        previewDismissWorkItem = nil
+        previewMergeInFlight = false
+        previewModel.state = .idle
+        previewModel.text = ""
+        previewPanel?.hide()
+        previewPanel?.resetToListening()
+    }
+
+    private func copyPreviewText(_ text: String) {
+        guard !text.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        schedulePreviewResultDismissal()
+    }
+
+    private func mergePreviewIntoTarget() {
+        previewDismissWorkItem?.cancel()
+        previewDismissWorkItem = nil
+        previewMergeInFlight = true
+        previewPanel?.mergeIntoTarget { [weak self] in
+            guard let self else { return }
+            self.previewMergeInFlight = false
+            self.previewModel.state = .idle
+            self.previewModel.text = ""
+            self.previewPanel?.resetToListening()
+        }
+    }
+
+    private func compactPreviewFailure(_ message: String) -> String {
+        if message.contains("Streaming fallback") {
+            return "语音服务暂不可用，点击右侧检查"
+        }
+        if message.contains("GLM-ASR") {
+            return "语音服务暂不可用，点击右侧检查"
+        }
+        return message
     }
 
     private func bindPipeline() {
@@ -299,15 +575,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switch state {
         case .idle:
             setStatusTitle(statusIdleTitle)
-            dictationMenuItem?.title = "Start Dictation…"
+            dictationMenuItem?.title = "开始听写…"
             dictationMenuItem?.isEnabled = true
         case .recording:
             setStatusTitle("inVoice •")
-            dictationMenuItem?.title = "Stop & Process"
+            dictationMenuItem?.title = "结束并整理"
             dictationMenuItem?.isEnabled = true
         case .transcribing, .generating:
             setStatusTitle("inVoice …")
-            dictationMenuItem?.title = "Processing…"
+            dictationMenuItem?.title = "处理中…"
             dictationMenuItem?.isEnabled = false
         case .ready:
             setStatusTitle("inVoice ✓")
@@ -329,12 +605,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             && Permissions.hasInputMonitoring()
             && Permissions.hasMicrophoneAccess()
         return permissionsReady && sidecarLauncher.installationStatus().isReady
-            ? "● Ready · Processing stays on this Mac"
-            : "○ Finish setup in inVoice Settings"
+            ? "● 本机处理 · 就绪"
+            : "○ 请在权限与诊断中完成设置"
     }
 
     func menuWillOpen(_ menu: NSMenu) {
         setupSummaryMenuItem?.title = setupSummary
+        deviceInputMenuItem?.title = deviceManager.inputSourceSummary
+        deviceAudioMenuItem?.title = deviceManager.audioSummary
     }
 
     @objc private func toggleDictation() {
@@ -358,6 +636,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        clipboardObserver.stop()
+        wirelessVoiceProvider.stop()
         sidecarLauncher.stopAll()
         if let observer = hotKeyDefaultsObserver {
             NotificationCenter.default.removeObserver(observer)
@@ -377,9 +657,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func makeSettingsWindowController() -> NSWindowController {
         let hostingController = NSHostingController(rootView: PreferencesView())
         let window = NSWindow(contentViewController: hostingController)
-        window.title = "inVoice Settings"
-        window.setContentSize(NSSize(width: 700, height: 620))
-        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.title = "inVoice"
+        window.identifier = NSUserInterfaceItemIdentifier("inVoiceWorkspace")
+        window.setFrameAutosaveName("inVoiceWorkspace")
+        window.minSize = NSSize(width: 860, height: 660)
+        window.setContentSize(NSSize(width: 1040, height: 790))
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.isReleasedWhenClosed = false
         window.center()
         return NSWindowController(window: window)
@@ -422,13 +705,13 @@ struct HotKeySettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 PreferencesHeader(
-                    title: "Shortcuts",
-                    subtitle: "Choose the gestures that make inVoice feel effortless everywhere on your Mac."
+                    title: "快捷键",
+                    subtitle: "为高频操作设置顺手的快捷键。修改后立即生效。"
                 )
 
-                SectionCard(title: "Settings", subtitle: "Open inVoice even when the menu bar item is hidden.") {
+                SectionCard(title: "主窗口", subtitle: "菜单栏被隐藏时，也能快速打开工作台。") {
                     HStack {
-                        Text("Open inVoice Settings")
+                        Text("打开 inVoice")
                             .font(.headline)
                         Spacer()
                         Text("Command+Option+P")
@@ -440,10 +723,10 @@ struct HotKeySettingsView: View {
                     }
                 }
 
-                SectionCard(title: "Activation", subtitle: "Press and hold to start recording.") {
+                SectionCard(title: "语音输入", subtitle: "按住开始录音，松开后自动完成输入。") {
                     ShortcutRecorderRow(
-                        title: "Hold to record",
-                        subtitle: "Release to finish and process.",
+                        title: "按住录音",
+                        subtitle: "松开即完成识别与文字整理。",
                         requiresModifier: false,
                         defaultKeyCode: ActivationKeyPreference.defaultValue.keyCode,
                         defaultModifiers: ActivationKeyPreference.defaultValue.modifiers,
@@ -454,10 +737,10 @@ struct HotKeySettingsView: View {
                     }
                 }
 
-                SectionCard(title: "Clipboard History", subtitle: "Quickly reuse previous clipboard items.") {
+                SectionCard(title: "剪贴板历史", subtitle: "无需切换应用，快速找到复制过的内容。") {
                     ShortcutRecorderRow(
-                        title: "Open clipboard history",
-                        subtitle: "Toggles the clipboard history panel.",
+                        title: "打开剪贴板历史",
+                        subtitle: "显示或隐藏快捷面板。",
                         requiresModifier: true,
                         defaultKeyCode: HotKeyPreference.defaultValue.keyCode,
                         defaultModifiers: HotKeyPreference.defaultValue.modifiers,
@@ -468,10 +751,10 @@ struct HotKeySettingsView: View {
                     }
                 }
 
-                SectionCard(title: "Selection Translation", subtitle: "Translate selected text via Ollama.") {
+                SectionCard(title: "本地助手", subtitle: "随时翻译、改写和提问。") {
                     ShortcutRecorderRow(
-                        title: "Translate selected text",
-                        subtitle: "Shows translation using the local Ollama model.",
+                        title: "打开助手",
+                        subtitle: "选中英文后打开，会自动翻译为中文。",
                         requiresModifier: true,
                         defaultKeyCode: TranslateHotKeyPreference.defaultValue.keyCode,
                         defaultModifiers: TranslateHotKeyPreference.defaultValue.modifiers,
@@ -487,233 +770,6 @@ struct HotKeySettingsView: View {
     }
 }
 
-struct PreferencesView: View {
-    @State private var selectedTab = 0
-
-    var body: some View {
-        TabView(selection: $selectedTab) {
-            WelcomeView(
-                onOpenShortcuts: { selectedTab = 1 },
-                onOpenPermissions: { selectedTab = 2 },
-                onOpenLLM: { selectedTab = 3 }
-            )
-                .tag(0)
-                .tabItem {
-                    Text("Welcome")
-                }
-            HotKeySettingsView()
-                .tag(1)
-                .tabItem {
-                    Text("Shortcuts")
-                }
-            PermissionsPanelView()
-                .tag(2)
-                .tabItem {
-                    Text("Permissions")
-                }
-            PromptSettingsView()
-                .tag(3)
-                .tabItem {
-                    Text("LLM")
-                }
-        }
-        .frame(minWidth: 680, minHeight: 600)
-    }
-}
-
-struct WelcomeView: View {
-    let onOpenShortcuts: () -> Void
-    let onOpenPermissions: () -> Void
-    let onOpenLLM: () -> Void
-
-    @State private var accessibilityAllowed = Permissions.hasAccessibility()
-    @State private var inputMonitoringAllowed = Permissions.hasInputMonitoring()
-    @State private var microphoneAllowed = Permissions.hasMicrophoneAccess()
-    @State private var installationStatus = SidecarLauncher.shared.installationStatus()
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(spacing: 18) {
-                    Image(nsImage: NSApp.applicationIconImage)
-                        .resizable()
-                        .frame(width: 76, height: 76)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Welcome to inVoice")
-                            .font(.largeTitle.weight(.bold))
-                        Text("Speak. Release. Keep typing.")
-                            .font(.title3)
-                            .foregroundColor(.secondary)
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 9) {
-                    HStack {
-                        Text(isReady ? "You're ready to use inVoice" : "A few steps, then you're ready")
-                            .font(.headline)
-                        Spacer()
-                        Text("\(completedSetupItems) of 4 complete")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    ProgressView(value: Double(completedSetupItems), total: 4)
-                        .tint(isReady ? .green : .accentColor)
-                }
-                .padding(16)
-                .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-
-                SectionCard(title: "Finish setup", subtitle: "inVoice needs access only when a feature uses it.") {
-                    WelcomeSetupRow(
-                        icon: "keyboard",
-                        title: "Global shortcuts",
-                        detail: "Input Monitoring",
-                        isComplete: inputMonitoringAllowed
-                    )
-                    WelcomeSetupRow(
-                        icon: "text.cursor",
-                        title: "Insert text",
-                        detail: "Accessibility",
-                        isComplete: accessibilityAllowed
-                    )
-                    WelcomeSetupRow(
-                        icon: "mic",
-                        title: "Capture your voice",
-                        detail: "Microphone",
-                        isComplete: microphoneAllowed
-                    )
-                    WelcomeSetupRow(
-                        icon: "cpu",
-                        title: "Private local processing",
-                        detail: "ASR runtimes and models",
-                        isComplete: installationStatus.isReady
-                    )
-
-                    HStack {
-                        Button(isReady ? "Review Setup" : "Finish Setup") {
-                            onOpenPermissions()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        Button("Refresh") {
-                            refreshStatuses()
-                        }
-                        Spacer()
-                    }
-                }
-
-                SectionCard(title: "Three ways to save time", subtitle: "Every feature is available from the inVoice menu, even before you memorize a shortcut.") {
-                    WelcomeFeatureRow(
-                        icon: "waveform",
-                        title: "Dictate anywhere",
-                        detail: "Hold \(ActivationKeyPreference.load().displayString), speak, then release."
-                    )
-                    WelcomeFeatureRow(
-                        icon: "doc.on.clipboard",
-                        title: "Reuse anything",
-                        detail: "Search clipboard history with \(HotKeyPreference.load().displayString)."
-                    )
-                    WelcomeFeatureRow(
-                        icon: "character.bubble",
-                        title: "Translate in place",
-                        detail: "Select text and press \(TranslateHotKeyPreference.load().displayString)."
-                    )
-
-                    HStack {
-                        Button("Customize Shortcuts") {
-                            onOpenShortcuts()
-                        }
-                        Button("Tune Local AI") {
-                            onOpenLLM()
-                        }
-                        Spacer()
-                    }
-                }
-
-                HStack(spacing: 10) {
-                    Image(systemName: "lock.shield.fill")
-                        .foregroundColor(.green)
-                    Text("Private by default: audio, text, clipboard history, and inference stay on this Mac after setup.")
-                        .font(.callout)
-                    Spacer()
-                }
-                .padding(14)
-                .background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            .padding(22)
-        }
-        .onAppear(perform: refreshStatuses)
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            refreshStatuses()
-        }
-    }
-
-    private var completedSetupItems: Int {
-        [inputMonitoringAllowed, accessibilityAllowed, microphoneAllowed, installationStatus.isReady]
-            .filter { $0 }
-            .count
-    }
-
-    private var isReady: Bool {
-        completedSetupItems == 4
-    }
-
-    private func refreshStatuses() {
-        inputMonitoringAllowed = Permissions.hasInputMonitoring()
-        accessibilityAllowed = Permissions.hasAccessibility()
-        microphoneAllowed = Permissions.hasMicrophoneAccess()
-        installationStatus = SidecarLauncher.shared.installationStatus()
-    }
-}
-
-private struct WelcomeSetupRow: View {
-    let icon: String
-    let title: String
-    let detail: String
-    let isComplete: Bool
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .frame(width: 22)
-                .foregroundColor(isComplete ? .green : .secondary)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                Text(detail)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            Spacer()
-            Label(isComplete ? "Ready" : "Needed", systemImage: isComplete ? "checkmark.circle.fill" : "circle.dashed")
-                .font(.caption.weight(.medium))
-                .foregroundColor(isComplete ? .green : .orange)
-        }
-    }
-}
-
-private struct WelcomeFeatureRow: View {
-    let icon: String
-    let title: String
-    let detail: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(.accentColor)
-                .frame(width: 34, height: 34)
-                .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                Text(detail)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            Spacer()
-        }
-    }
-}
-
 struct PermissionsPanelView: View {
     @State private var accessibilityAllowed = Permissions.hasAccessibility()
     @State private var inputMonitoringAllowed = Permissions.hasInputMonitoring()
@@ -723,37 +779,37 @@ struct PermissionsPanelView: View {
     @State private var installationStatus = SidecarLauncher.shared.installationStatus()
 
     var body: some View {
-        ScrollView {
+        VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 18) {
                 PreferencesHeader(
-                    title: "Permissions",
-                    subtitle: "Grant the permissions below to keep shortcuts and recording working across apps."
+                    title: "系统权限",
+                    subtitle: "仅用于录音、全局快捷键，以及把结果输入到当前应用。"
                 )
 
-                SectionCard(title: "System Access", subtitle: "Required for global shortcuts and focus control.") {
+                SectionCard(title: "系统授权", subtitle: "授权后返回此窗口，状态会自动更新。") {
                     PermissionRow(
-                        title: "Input Monitoring",
-                        detail: "Required for global shortcuts across all apps.",
-                        statusText: inputMonitoringAllowed ? "Allowed" : "Denied",
+                        title: "输入监控",
+                        detail: "让按住说话的快捷键在其他应用中生效。",
+                        statusText: inputMonitoringAllowed ? "已允许" : "未允许",
                         statusColor: inputMonitoringAllowed ? .green : .red,
-                        actionTitle: "Open Settings",
+                        actionTitle: "打开系统设置",
                         actionEnabled: true,
                         action: openInputMonitoringSettings
                     )
 
                     PermissionRow(
-                        title: "Accessibility",
-                        detail: "Required to inject text and control focus.",
-                        statusText: accessibilityAllowed ? "Allowed" : "Denied",
+                        title: "辅助功能",
+                        detail: "把完成的文字粘贴到原来的输入框。",
+                        statusText: accessibilityAllowed ? "已允许" : "未允许",
                         statusColor: accessibilityAllowed ? .green : .red,
-                        actionTitle: "Open Settings",
+                        actionTitle: "打开系统设置",
                         actionEnabled: true,
                         action: openAccessibilitySettings
                     )
 
                     PermissionRow(
-                        title: "Microphone",
-                        detail: "Required to capture audio for transcription.",
+                        title: "麦克风",
+                        detail: "仅在发起听写时收音。",
                         statusText: microphoneStatus,
                         statusColor: microphoneStatusColor,
                         actionTitle: microphoneActionTitle,
@@ -762,63 +818,63 @@ struct PermissionsPanelView: View {
                     )
                 }
 
-                SectionCard(title: "Local Runtime", subtitle: "Installed by scripts/install.sh and used for on-device processing.") {
+                SectionCard(title: "本地识别环境", subtitle: "本机模型与运行环境的安装检查。") {
                     InfoRow(
-                        title: "Sidecar Root",
-                        value: installationStatus.sidecarRootPath ?? "Not configured"
+                        title: "运行环境位置",
+                        value: installationStatus.sidecarRootPath ?? "尚未配置"
                     )
                     RuntimeStatusRow(
-                        title: "Final ASR",
+                        title: "最终语音识别",
                         isReady: installationStatus.finalASREnvironmentReady,
-                        readyText: "Environment ready",
-                        missingText: "Run installer"
+                        readyText: "已安装",
+                        missingText: "需要安装"
                     )
                     RuntimeStatusRow(
-                        title: "Final ASR Model",
+                        title: "识别模型",
                         isReady: installationStatus.finalASRModelReady,
-                        readyText: "Model ready",
-                        missingText: "Run installer"
+                        readyText: "已安装",
+                        missingText: "需要安装"
                     )
                     RuntimeStatusRow(
-                        title: "Streaming ASR",
+                        title: "实时预览",
                         isReady: installationStatus.fastASREnvironmentReady,
-                        readyText: "Environment ready",
-                        missingText: "Run installer"
+                        readyText: "已安装",
+                        missingText: "需要安装"
                     )
                     RuntimeStatusRow(
-                        title: "Streaming Model",
+                        title: "预览模型",
                         isReady: installationStatus.fastASRModelReady,
-                        readyText: "Model ready",
-                        missingText: "Run installer"
+                        readyText: "已安装",
+                        missingText: "需要安装"
                     )
                 }
 
-                SectionCard(title: "Diagnostics", subtitle: "Helpful for support or debugging.") {
+                SectionCard(title: "诊断信息", subtitle: "遇到问题时，可查看日志确认原因。") {
                     InfoRow(
-                        title: "App Path",
+                        title: "应用位置",
                         value: Bundle.main.bundlePath
                     )
                     HStack {
-                        Button("Refresh Status") {
+                        Button("刷新状态") {
                             refreshStatuses()
                         }
-                        Button("Open Logs") {
+                        Button("打开日志") {
                             NSWorkspace.shared.open(SidecarLauncher.shared.logsDirectoryURL())
                         }
                         Spacer()
                         if allPermissionsGranted && installationStatus.isReady {
-                            Text("All set")
+                            Text("已就绪")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
                     }
                 }
 
-                Text("Note: macOS blocks global shortcuts while Secure Input is active (for example in password fields).")
+                Text("密码框等安全输入场景中，macOS 会暂时阻止全局快捷键。")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
-            .padding(20)
+
         }
         .onAppear {
             refreshStatuses()
@@ -834,12 +890,12 @@ struct PermissionsPanelView: View {
 
     private var microphoneActionTitle: String {
         if isRequestingMicrophone {
-            return "Requesting..."
+            return "请求中…"
         }
         if Permissions.microphoneNeedsRequest() {
-            return "Request Access"
+            return "允许访问"
         }
-        return "Open Settings"
+        return "打开系统设置"
     }
 
     private var microphoneStatusColor: Color {
@@ -963,7 +1019,7 @@ struct InfoRow: View {
     }
 }
 
-private struct PreferencesHeader: View {
+struct PreferencesHeader: View {
     let title: String
     let subtitle: String
 
@@ -978,7 +1034,7 @@ private struct PreferencesHeader: View {
     }
 }
 
-private struct SectionCard<Content: View>: View {
+struct SectionCard<Content: View>: View {
     let title: String
     let subtitle: String
     let content: Content
@@ -1003,6 +1059,7 @@ private struct SectionCard<Content: View>: View {
                 content
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -1053,7 +1110,7 @@ struct ShortcutRecorderRow: View {
                 .tint(isRecording ? .accentColor : .primary)
             }
             HStack {
-                Button("Reset to Default") {
+                Button("恢复默认") {
                     resetToDefault()
                 }
                 .buttonStyle(.link)
@@ -1117,7 +1174,7 @@ struct ShortcutRecorderRow: View {
             if event.keyCode == UInt16(kVK_Function) {
                 let capturedModifiers = normalizedModifiers(event.modifierFlags)
                 if requiresModifier && capturedModifiers == 0 {
-                    statusMessage = "Add at least one modifier."
+                    statusMessage = "请至少加上一个修饰键（⌘、⌥、⌃ 或 ⇧）。"
                     statusIsError = true
                     return true
                 }
@@ -1127,14 +1184,14 @@ struct ShortcutRecorderRow: View {
             return true
         case .keyDown:
             if event.keyCode == UInt16(kVK_Escape) {
-                statusMessage = "Canceled"
+                statusMessage = "已取消"
                 statusIsError = false
                 stopRecording()
                 return true
             }
             let capturedModifiers = normalizedModifiers(event.modifierFlags)
             if requiresModifier && capturedModifiers == 0 {
-                statusMessage = "Add at least one modifier."
+                statusMessage = "请至少加上一个修饰键（⌘、⌥、⌃ 或 ⇧）。"
                 statusIsError = true
                 return true
             }
@@ -1148,7 +1205,7 @@ struct ShortcutRecorderRow: View {
         self.keyCode = keyCode
         self.modifiers = modifiers
         onSave(keyCode, modifiers)
-        statusMessage = "Saved"
+        statusMessage = "已保存"
         statusIsError = false
         stopRecording()
         return true
@@ -1158,7 +1215,7 @@ struct ShortcutRecorderRow: View {
         keyCode = defaultKeyCode
         modifiers = defaultModifiers
         onSave(defaultKeyCode, defaultModifiers)
-        statusMessage = "Reset to default"
+        statusMessage = "已恢复默认"
         statusIsError = false
     }
 
@@ -1209,27 +1266,30 @@ final class SelectionTranslationViewModel: ObservableObject {
     @Published var state: State = .idle
     @Published var messages: [ChatMessage] = []
     @Published var composerText: String = ""
+    @Published private(set) var selectedText: String = ""
+    @Published private(set) var captureSource: SelectionCaptureSource?
+    @Published private(set) var composerFocusRequest = 0
 
     private let client = OfflineLLMClient()
     private var task: Task<Void, Never>?
     private var pendingAssistantID: UUID?
 
     func start(selection: SelectionCaptureResult) {
-        task?.cancel()
-        task = nil
-        messages = []
-        composerText = ""
-        pendingAssistantID = nil
+        resetConversation()
 
         switch selection {
-        case .success(let text, _):
+        case .success(let text, let source):
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
                 state = .error("No text selected.")
                 return
             }
+            selectedText = trimmed
+            captureSource = source
             sendUserMessage(trimmed)
-        case .empty, .failure:
+        case .empty:
+            state = .idle
+        case .failure:
             state = .error(selection.userMessage)
         }
     }
@@ -1242,10 +1302,58 @@ final class SelectionTranslationViewModel: ObservableObject {
 
     func sendComposerMessage() {
         let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty, state != .translating else { return }
         composerText = ""
         sendUserMessage(text, kind: .chat)
     }
+
+    func requestComposerFocus() {
+        composerFocusRequest &+= 1
+    }
+
+    func retryTranslation() {
+        guard let index = messages.lastIndex(where: { $0.role == .user }) else { return }
+        let message = messages[index]
+        messages = Array(messages.prefix(index))
+        sendUserMessage(message.content, kind: message.kind)
+    }
+
+    func newConversation() {
+        resetConversation()
+        requestComposerFocus()
+    }
+
+    func stopGenerating() {
+        guard state == .translating else { return }
+        task?.cancel()
+        task = nil
+        if let pendingAssistantID,
+           let index = messages.firstIndex(where: { $0.id == pendingAssistantID }),
+           messages[index].content.isEmpty {
+            messages.remove(at: index)
+        }
+        pendingAssistantID = nil
+        state = messages.contains(where: { $0.role == .assistant && !$0.content.isEmpty }) ? .ready : .idle
+    }
+
+    var lastAssistantText: String? {
+        messages.last(where: { $0.role == .assistant && !$0.content.isEmpty })?.content
+    }
+
+    #if DEBUG
+    func loadPreview(selectedText: String, translation: String) {
+        cancel()
+        self.selectedText = selectedText
+        captureSource = .copyFallback
+        messages = [
+            ChatMessage(role: .user, content: selectedText, kind: .selection),
+            ChatMessage(role: .assistant, content: translation, kind: .chat),
+        ]
+        composerText = ""
+        pendingAssistantID = nil
+        state = .ready
+    }
+    #endif
 
     private func sendUserMessage(_ text: String, kind: ChatMessage.Kind = .selection) {
         task?.cancel()
@@ -1258,25 +1366,47 @@ final class SelectionTranslationViewModel: ObservableObject {
         pendingAssistantID = assistant.id
         state = .translating
         task = Task { @MainActor [weak self] in
-            await self?.runTranslation()
+            await self?.runConversation()
         }
     }
 
-    private func runTranslation() async {
+    private func resetConversation() {
+        task?.cancel()
+        task = nil
+        state = .idle
+        messages = []
+        composerText = ""
+        selectedText = ""
+        captureSource = nil
+        pendingAssistantID = nil
+    }
+
+    private func runConversation() async {
         do {
             let payload = messages.filter { message in
                 !(message.role == .assistant && message.content.isEmpty)
             }.map { message in
-                OfflineLLMClient.ChatMessage(
+                let content: String
+                if message.role == .user, message.kind == .selection {
+                    content = """
+                    Translate the selected English text into Simplified Chinese. Preserve code, paths, URLs, commands, Markdown structure, and established technical terms. Return only the translation.
+
+                    Selected text:
+                    \(message.content)
+                    """
+                } else {
+                    content = message.content
+                }
+                return OfflineLLMClient.ChatMessage(
                     role: message.role == .user ? "user" : "assistant",
-                    content: message.content,
-                    applyTemplate: message.role == .user && message.kind == .selection
+                    content: content,
+                    applyTemplate: false
                 )
             }
             let assistantID = pendingAssistantID
             let translated = try await client.chatStream(
                 messages: payload,
-                profile: .translation
+                profile: .assistant
             ) { [weak self] delta in
                 self?.appendAssistantDelta(delta, assistantID: assistantID)
             }
@@ -1289,7 +1419,7 @@ final class SelectionTranslationViewModel: ObservableObject {
             if Task.isCancelled {
                 return
             }
-            state = .error("Translation failed.")
+            state = .error("本地助手暂时未能完成回复。请确认 Ollama 已启动，再重试。")
         }
     }
 
@@ -1311,69 +1441,98 @@ struct SelectionTranslationView: View {
     @ObservedObject var model: SelectionTranslationViewModel
     let onClose: () -> Void
     let onCopy: (String) -> Void
+    let onSpeak: (String) -> Void
+    @FocusState private var isComposerFocused: Bool
+    @State private var copiedText: String?
+
+    private let panelBackground = Color(red: 0.168, green: 0.168, blue: 0.172)
+    private let composerBackground = Color(red: 0.158, green: 0.158, blue: 0.162)
+    private let primaryText = Color.white.opacity(0.88)
+    private let secondaryText = Color.white.opacity(0.54)
+    private let hairline = Color.white.opacity(0.10)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(spacing: 0) {
             header
-            chatBody
+            documentBody
             composer
         }
-        .padding(16)
-        .frame(width: 600, height: 420)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .frame(
+            minWidth: 560,
+            idealWidth: 620,
+            maxWidth: .infinity,
+            minHeight: 520,
+            idealHeight: 706,
+            maxHeight: .infinity
+        )
+        .background(panelBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(hairline)
+        }
+        .environment(\.colorScheme, .dark)
     }
 
     private var header: some View {
         HStack(spacing: 10) {
-            Image(systemName: "text.bubble")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.accentColor)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Translation Chat")
-                    .font(.headline)
-                Text("Chat with the local Ollama model about your selection.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+            Image(systemName: "sparkles").foregroundStyle(Color.indigo)
+            Text("本地助手").font(.system(size: 13, weight: .semibold)).foregroundStyle(primaryText)
+            Text("只在这台 Mac 上处理").font(.system(size: 10)).foregroundStyle(secondaryText)
+            Spacer(minLength: 0)
+            if !model.messages.isEmpty {
+                Button("新对话") { model.newConversation() }
+                    .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(secondaryText)
             }
-            Spacer()
-            statusView
-            Button("Close") {
-                onClose()
+
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 30, height: 30)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.plain)
+            .foregroundColor(secondaryText)
+            .help("关闭（Esc）")
         }
+        .padding(.horizontal, 10)
+        .frame(height: 54)
     }
 
-    private var chatBody: some View {
+    private var documentBody: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
+                LazyVStack(alignment: .leading, spacing: 22) {
                     if model.messages.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            if case .error(let message) = model.state {
-                                Text(message)
-                                    .font(.headline)
-                                Text("Select text and trigger the translate shortcut to try again.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            } else {
-                                Text("No messages yet")
-                                    .font(.headline)
-                                Text("Select text and trigger the translate shortcut to start.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text("从一个想法开始。").font(.system(size: 26, weight: .semibold)).foregroundStyle(primaryText)
+                            Text("翻译一段文字，整理一个想法，或者直接提问。")
+                                .font(.system(size: 13)).foregroundStyle(secondaryText)
+                            ForEach(["帮我把这段话改得更简洁：", "翻译成自然英文：", "帮我整理成待办清单："], id: \.self) { suggestion in
+                                Button { model.composerText = suggestion; model.requestComposerFocus() } label: {
+                                    HStack { Text(suggestion); Spacer(); Image(systemName: "arrow.up.left") }
+                                        .font(.system(size: 13)).padding(14)
+                                        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+                                }.buttonStyle(.plain).foregroundStyle(primaryText)
                             }
-                        }
-                        .padding(.vertical, 12)
-                    } else {
-                        ForEach(model.messages) { message in
-                            chatBubble(for: message)
-                        }
+                            Text("⌘ Return 发送 · 按住 Fn 也可以输入")
+                                .font(.system(size: 11)).foregroundStyle(secondaryText)
+                        }.padding(.vertical, 28)
+                    }
+                    ForEach(model.messages) { message in
+                        messageView(message)
+                    }
+
+                    if case .error(let message) = model.state {
+                        errorCard(message)
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(.leading, 18)
+                .padding(.trailing, 60)
+                .padding(.top, 25)
+                .padding(.bottom, 30)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .scrollIndicators(.hidden)
             .onChange(of: model.messages) { _ in
                 if let last = model.messages.last?.id {
                     withAnimation(.easeOut(duration: 0.2)) {
@@ -1382,119 +1541,303 @@ struct SelectionTranslationView: View {
                 }
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(nsColor: .textBackgroundColor).opacity(0.55))
-        )
     }
 
-    private func chatBubble(for message: SelectionTranslationViewModel.ChatMessage) -> some View {
-        HStack {
-            if message.role == .assistant {
-                bubbleContent(message, alignment: .leading, background: Color.white.opacity(0.08))
-                Spacer(minLength: 40)
+    @ViewBuilder
+    private func messageView(_ message: SelectionTranslationViewModel.ChatMessage) -> some View {
+        if message.role == .assistant {
+            assistantDocument(message)
+        } else {
+            HStack {
+                Spacer(minLength: 90)
+                Text(message.content)
+                    .font(.system(size: 15))
+                    .foregroundColor(primaryText)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 11)
+                    .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .id(message.id)
+        }
+    }
+
+    private func assistantDocument(_ message: SelectionTranslationViewModel.ChatMessage) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if message.content.isEmpty {
+                HStack(spacing: 9) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("正在回复…")
+                        .font(.system(size: 15))
+                        .foregroundColor(secondaryText)
+                }
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                Spacer(minLength: 40)
-                bubbleContent(message, alignment: .trailing, background: Color.accentColor.opacity(0.18))
+                RichMarkdownDocumentView(source: message.content, onCopy: onCopy)
+                    .foregroundColor(primaryText)
+                responseActions(for: message.content)
             }
         }
         .id(message.id)
     }
 
-    private func bubbleContent(
-        _ message: SelectionTranslationViewModel.ChatMessage,
-        alignment: HorizontalAlignment,
-        background: Color
-    ) -> some View {
-        VStack(alignment: alignment, spacing: 4) {
-            Text(label(for: message))
-                .font(.caption2)
-                .foregroundColor(.secondary)
-            Text(message.content)
-                .font(.body)
-                .textSelection(.enabled)
+    private func responseActions(for text: String) -> some View {
+        HStack(spacing: 14) {
+            responseActionButton(copiedText == text ? "checkmark" : "square.on.square", help: "复制回复") {
+                onCopy(text)
+                copiedText = text
+            }
+            responseActionButton("speaker.wave.2", help: "朗读") { onSpeak(text) }
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(background)
-        )
-        .frame(maxWidth: 420, alignment: alignment == .leading ? .leading : .trailing)
+        .foregroundColor(secondaryText)
+    }
+
+    private func responseActionButton(
+        _ systemName: String,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 14, weight: .regular))
+                .frame(width: 18, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     private var composer: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Continue the conversation")
-                .font(.caption)
-                .foregroundColor(.secondary)
-            HStack(spacing: 8) {
-                TextEditor(text: $model.composerText)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(minHeight: 60, maxHeight: 90)
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Color(nsColor: .textBackgroundColor))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(Color.secondary.opacity(0.2))
-                    )
-
-                VStack(spacing: 8) {
-                    Button("Send") {
-                        model.sendComposerMessage()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(model.state == .translating)
-
-                    Button("Copy Last") {
-                        if let last = model.messages.last(where: { $0.role == .assistant }) {
-                            onCopy(last.content)
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(model.messages.first(where: { $0.role == .assistant }) == nil)
+        HStack(alignment: .center, spacing: 10) {
+            TextField("输入问题，或按住 Fn 说话…", text: $model.composerText, axis: .vertical)
+                .font(.system(size: 15))
+                .foregroundColor(primaryText)
+                .textFieldStyle(.plain)
+                .lineLimit(1...4)
+                .focused($isComposerFocused)
+                .onSubmit {
+                    model.sendComposerMessage()
                 }
-            }
 
-            HStack {
-                Text("Esc to close")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                Spacer()
+            if model.state == .translating {
+                Button {
+                    model.stopGenerating()
+                } label: {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(Color.black.opacity(0.72))
+                .background(Color.white.opacity(0.62), in: Circle())
+                .help("停止生成")
+            } else {
+                Button {
+                    model.sendComposerMessage()
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 14, weight: .medium))
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(canSend ? Color.black.opacity(0.78) : Color.black.opacity(0.58))
+                .background(canSend ? Color.white.opacity(0.90) : Color.white.opacity(0.44), in: Circle())
+                .keyboardShortcut(.return, modifiers: [.command])
+                .disabled(!canSend)
+                .help("发送（⌘ Return）")
+            }
+        }
+        .padding(.leading, 18)
+        .padding(.trailing, 6)
+        .frame(minHeight: 50)
+        .background(composerBackground, in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke(hairline)
+        }
+        .padding(.horizontal, 8)
+        .padding(.bottom, 9)
+        .onChange(of: model.composerFocusRequest) { _ in
+            DispatchQueue.main.async {
+                isComposerFocused = true
+            }
+        }
+        .onAppear {
+            DispatchQueue.main.async {
+                isComposerFocused = true
             }
         }
     }
 
-    private func label(for message: SelectionTranslationViewModel.ChatMessage) -> String {
-        switch message.role {
-        case .assistant:
-            return "Assistant"
-        case .user:
-            return message.kind == .selection ? "Selected" : "You"
+    private func errorCard(_ message: String) -> some View {
+        HStack(spacing: 10) {
+            Text(message)
+                .font(.system(size: 15))
+                .foregroundColor(secondaryText)
+            Spacer()
+            if model.messages.contains(where: { $0.role == .user }) {
+                Button("重试") {
+                    model.retryTranslation()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
         }
+        .padding(.vertical, 8)
+    }
+
+    private var canSend: Bool {
+        model.state != .translating
+            && !model.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+}
+
+private struct RichMarkdownDocumentView: View {
+    let source: String
+    let onCopy: (String) -> Void
+
+    private var blocks: [MarkdownDocumentBlock] {
+        MarkdownDocumentParser.parse(source)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                blockView(block)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .textSelection(.enabled)
     }
 
     @ViewBuilder
-    private var statusView: some View {
-        switch model.state {
-        case .translating:
-            HStack(spacing: 6) {
-                ProgressView()
-                    .scaleEffect(0.8)
-                Text("Translating")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+    private func blockView(_ block: MarkdownDocumentBlock) -> some View {
+        switch block {
+        case .heading(let level, let text):
+            inlineMarkdown(text)
+                .font(headingFont(level))
+                .padding(.top, level <= 2 ? 5 : 2)
+        case .paragraph(let text):
+            inlineMarkdown(text)
+                .font(.system(size: 15, weight: .regular))
+                .lineSpacing(4)
+        case .quote(let text):
+            HStack(alignment: .top, spacing: 22) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color.white.opacity(0.22))
+                    .frame(width: 4)
+                    .frame(minHeight: 24)
+                inlineMarkdown(text)
+                    .font(.system(size: 15, weight: .regular))
+                    .lineSpacing(4)
             }
-        case .error(let message):
-            Text(message)
-                .font(.caption)
-                .foregroundColor(.red)
-        default:
-            EmptyView()
+            .padding(.vertical, 6)
+        case .unorderedList(let items):
+            VStack(alignment: .leading, spacing: 9) {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    HStack(alignment: .firstTextBaseline, spacing: 9) {
+                        Circle()
+                            .fill(Color.secondary)
+                            .frame(width: 5, height: 5)
+                        inlineMarkdown(item)
+                            .font(.system(size: 15))
+                    }
+                }
+            }
+            .padding(.leading, 5)
+        case .orderedList(let items):
+            VStack(alignment: .leading, spacing: 9) {
+                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                    HStack(alignment: .firstTextBaseline, spacing: 9) {
+                        Text("\(index + 1).")
+                            .font(.system(size: 15).monospacedDigit())
+                            .foregroundColor(.secondary)
+                            .frame(minWidth: 22, alignment: .trailing)
+                        inlineMarkdown(item)
+                            .font(.system(size: 15))
+                    }
+                }
+            }
+        case .code(let language, let content):
+            CodeDocumentBlock(language: language, content: content) {
+                onCopy(content)
+            }
+        case .divider:
+            Divider()
+                .padding(.vertical, 4)
         }
+    }
+
+    private func inlineMarkdown(_ text: String) -> Text {
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        )
+        if let attributed = try? AttributedString(markdown: text, options: options) {
+            return Text(attributed)
+        }
+        return Text(text)
+    }
+
+    private func headingFont(_ level: Int) -> Font {
+        switch level {
+        case 1:
+            return .system(size: 22, weight: .bold)
+        case 2:
+            return .system(size: 19, weight: .bold)
+        case 3:
+            return .system(size: 17, weight: .semibold)
+        default:
+            return .system(size: 16, weight: .semibold)
+        }
+    }
+}
+
+private struct CodeDocumentBlock: View {
+    let language: String?
+    let content: String
+    let onCopy: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(languageLabel)
+                    .font(.caption.monospaced())
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button(action: onCopy) {
+                    Label("Copy", systemImage: "doc.on.doc")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.black.opacity(0.22))
+
+            ScrollView(.horizontal, showsIndicators: true) {
+                Text(content)
+                    .font(.system(.body, design: .monospaced))
+                    .lineSpacing(2)
+                    .textSelection(.enabled)
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Color.black.opacity(0.12))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.secondary.opacity(0.18))
+        )
+    }
+
+    private var languageLabel: String {
+        let trimmed = language?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "Plain text" : trimmed
     }
 }
 
@@ -1503,6 +1846,7 @@ final class SelectionTranslationPanelController {
     static let shared = SelectionTranslationPanelController()
 
     private let viewModel = SelectionTranslationViewModel()
+    private let speechSynthesizer = NSSpeechSynthesizer()
     private var panel: SelectionTranslationPanel?
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -1517,8 +1861,41 @@ final class SelectionTranslationPanelController {
         }
         viewModel.start(selection: selection)
         panel?.show()
+        focusComposer()
         startKeyMonitor()
     }
+
+    #if DEBUG
+    func showPreview() {
+        if UserDefaults.standard.bool(forKey: "INVOICE_EMPTY_DIALOG_PREVIEW") {
+            viewModel.start(selection: .empty(.clipboardUnchanged))
+        } else {
+            viewModel.loadPreview(
+                selectedText: """
+                Explain when the selected-English translation behavior runs.
+                """,
+                translation: """
+                这里的“时”指的是这个触发逻辑里的时机：
+
+                **选中文本时** → 打开这个极简对话框，并自动把选中的英文作为第一条上下文，默认执行「英文 → 中文」。
+
+                **没有选中文本时** → 打开的完全相同的对话框，只是没有自动任务，焦点直接落在输入框，你可以直接问任何问题。
+
+                所以产品本质不是“翻译窗口”，而是一个极简本地 AI 对话框。翻译只是其中一个快捷触发行为：
+
+                > 选中英文 + 快捷键 = 自动帮你发起一次“翻译成中文”的对话。
+
+                之后你继续在下面输入，比如“解释一下这段”“更口语一点”“这里为什么这么写”，都应该按普通对话处理，而不是继续被锁死在翻译模式里。
+
+                这样理解的话，UI 甚至不需要出现「English → Chinese」「Translation」之类的标题。
+                """
+            )
+        }
+        panel?.show()
+        focusComposer()
+        startKeyMonitor()
+    }
+    #endif
 
     func hide() {
         panel?.hide()
@@ -1534,9 +1911,19 @@ final class SelectionTranslationPanelController {
             },
             onCopy: { [weak self] text in
                 self?.copyText(text)
+            },
+            onSpeak: { [weak self] text in
+                self?.speak(text)
             }
         )
         panel = SelectionTranslationPanel(rootView: view)
+    }
+
+    private func focusComposer() {
+        DispatchQueue.main.async { [weak self] in
+            self?.panel?.makeKey()
+            self?.viewModel.requestComposerFocus()
+        }
     }
 
     private func copyText(_ text: String) {
@@ -1545,6 +1932,15 @@ final class SelectionTranslationPanelController {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
+    }
+
+    private func speak(_ text: String) {
+        guard !text.isEmpty else { return }
+        if speechSynthesizer.isSpeaking {
+            speechSynthesizer.stopSpeaking()
+        } else {
+            speechSynthesizer.startSpeaking(text)
+        }
     }
 
     private func startKeyMonitor() {

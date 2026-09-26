@@ -14,6 +14,20 @@ cooldown, the two-event Cmd+V plan, clipboard deep snapshots, conditional
 restore, copy-only fallback, consecutive injections, and delivery-slot
 serialization.
 
+It also covers Accurate/Fast/Adaptive selection, clean-frame requirements,
+adaptive stability gates, little-endian stream framing, and all three
+post-processing routes.
+
+Run sidecar protocol and single-flight tests:
+
+```bash
+python3 -m unittest discover -s sidecars/tests -v
+```
+
+These tests include 500 deterministic simulated sessions with a short tail
+chunk, sequence-gap rejection, finish integrity, duplicate finish caching,
+TTL boundaries, handshake validation, and concurrent GLM queue serialization.
+
 ## Sidecars
 
 - Start ASR and LLM servers without errors.
@@ -21,10 +35,36 @@ serialization.
 - Run `scripts/smoke_asr.sh` and verify JSON response (likely empty text for silence).
 - POST a short wav to `/v1/asr/transcribe` and verify JSON response.
 - POST a sample request to `/v1/llm/generate` and verify JSON response.
+- Verify `/health` with the per-launch Bearer token reports the expected
+  service identity, protocol v1, model identity/hash, and runtime version.
+- Verify stop order is tap removal, audio-queue drain, short-tail send,
+  `finish`, then an 800 ms maximum wait for `done`.
+
+## Dictation modes and metrics
+
+- The shipping default is `accurate + translateAndPolish`.
+- `direct` must neither warm nor call Ollama; an unavailable Ollama must return
+  the ASR text in the other two modes.
+- Fast and Adaptive stay hidden until the fixed corpus passes. For dogfood only:
+
+```bash
+defaults write com.voiceops.VoiceOps streamingFinalsApproved -bool true
+defaults write com.voiceops.VoiceOps dictationASRMode -string fast
+defaults write com.voiceops.VoiceOps approvedAdaptiveScriptClasses -array cjk latin mixed
+```
+
+- Metrics are written to `~/Library/Logs/VoiceOps/session_metrics.jsonl`, capped
+  at 50 MB with 14-day retention. Inspect them for timings, counts, modes,
+  model versions, and failure reasons; audio and transcript text must be absent.
+- See `benchmarks/dictation/README.md` for the 200-item model gate and evaluator.
 
 ## macOS app
 
 - Launch app and confirm menu bar icon appears.
+- With no selection, press Command+Option+T and verify one compact dialog opens, the composer is focused, and a general prompt can be sent.
+- Select English text, press Command+Option+T, and verify Simplified Chinese translation starts automatically.
+- Resize the dialog and verify the compact source preview, rich Markdown headings/lists/quotes, fenced-code copy action, and composer remain usable.
+- Enter a follow-up and press Command+Return; verify it streams one response and Stop cancels generation cleanly.
 - Focus a text field in another app (Slack/Chrome/VSCode).
 - Hold Fn, the display, or PWR to start streaming; verify preview feedback updates but the focused field is not mutated yet.
 - Release Fn, the display, or PWR; verify exactly one final result is pasted.
@@ -49,3 +89,22 @@ serialization.
 - Switch applications during final ASR and confirm the result is copied rather than pasted into the new app.
 - Copy new clipboard content during injection and confirm it is not overwritten by delayed restoration.
 - Repeat in Codex, a browser contenteditable, Feishu, TextEdit, Terminal/iTerm2, and a non-QWERTY keyboard layout.
+
+## Local product smoke test (shipping clients)
+
+Use a synthetic fixture, then run the actual Swift clients against the installed local services:
+
+```bash
+say -v Tingting -o /tmp/invoice-product-qa.aiff '请在周五之前完成产品体验的优化，并且保留中文输出。'
+afconvert -f WAVE -d LEI16@16000 -c 1 /tmp/invoice-product-qa.aiff /tmp/invoice-product-qa.wav
+swiftc -parse-as-library -O -o /tmp/invoice-local-product-smoke \
+  tests/e2e/local_product_smoke.swift \
+  apps/macos/VoiceOps/Services/{OfflineLLMClient,LLMRouter,ASRClient,SidecarLauncher}.swift \
+  apps/macos/VoiceOps/Models/Mode.swift \
+  apps/macos/VoiceOpsCore/{TranslationPromptDefaults,DictationPolicy}.swift
+/tmp/invoice-local-product-smoke /tmp/invoice-product-qa.wav
+```
+
+The probe checks transcription, the English dictation prompt, streamed completion,
+missing-model fallback, and direct mode. It uses the installed token without printing
+it. The synthetic speech does not read the microphone or modify the clipboard.

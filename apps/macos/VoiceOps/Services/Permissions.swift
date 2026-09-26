@@ -67,15 +67,15 @@ enum Permissions {
     static func microphoneStatusLabel() -> String {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
-            return "Allowed"
+            return "已允许"
         case .denied:
-            return "Denied"
+            return "未允许"
         case .restricted:
-            return "Restricted"
+            return "受系统限制"
         case .notDetermined:
-            return "Not Determined"
+            return "尚未授权"
         @unknown default:
-            return "Unknown"
+            return "未知"
         }
     }
 

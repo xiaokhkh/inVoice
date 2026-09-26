@@ -18,7 +18,7 @@
 屏幕 / PWR 按下
   -> ESP32-S3 发送一次 F13 key-down
   -> inVoice 创建 Session，并记录当前前台应用 PID
-  -> 只使用 MLX Voice Mic 录音，流式 ASR 只更新 UI
+  -> 只使用 MLX Voice Mic 录音；partial 只更新 UI，完整且已验收的 final 可参与终稿决策
   -> 松开发送一次 F13 key-up
   -> 最终 ASR / 可选 LLM
   -> 校验 Session 仍有效、目标应用仍在前台、该 Session 尚未投递
@@ -39,7 +39,7 @@
 
 - 一个物理按住周期只创建一个 Session。
 - 一个 Session 最多只有一个文字投递者。
-- 流式识别只显示预览，不能写输入框。
+- 流式 partial 只显示预览，不能写输入框；仅完整、clean 且通过模型门禁的 final 可取得唯一投递权。
 - 不因 AX 无法验证 Electron/WebView 内容而重试。
 - 用户切换应用后不把文字注入新应用；结果保留在剪贴板。
 - 板端自然人声不能自行触发录音，只有屏幕或 PWR 按住有效；BOOT 单击只切换
@@ -56,7 +56,7 @@
 | 剪贴板 | 浅备份且无 `changeCount` 检查 | 深复制、共享串行槽、generation、compare-and-restore | 避免覆盖用户新复制内容和连续会话竞争 |
 | 状态机 | `idle -> streaming -> ending` | `idle -> starting -> listening -> processing -> inserting` | 不再丢失 Starting 阶段的 key-up |
 | 会话隔离 | 部分 UUID/token，无统一投递所有权 | 所有异步边界校验 UUID；原子领取一次投递权 | 旧回调不能影响新 Session |
-| 流式识别 | 只更新 Preview | 保持且不持有 injector | 部分识别无法写输入框 |
+| 流式识别 | 只更新 Preview | partial 不持有 injector；完整且已验收的 final 通过 Session 唯一投递权提交 | partial 无法写输入框，终稿也不能重复投递 |
 
 ## TODO
 
@@ -124,7 +124,7 @@
 
 ## 实施与自动验证结果
 
-- 新增独立 `VoiceOpsCore` Swift Package，当前 11 个自动化测试全部通过。
+- 独立 `VoiceOpsCore` Swift Package 覆盖 Session、投递、流式完整性、ASR 策略和后处理策略。
 - inVoice Debug、Release 构建通过，Release app 签名验证通过。
 - 已更新 `/Users/aminer/Applications/inVoice.app`，系统当前只运行一个实例。
 - `scripts/doctor.sh` 对 sidecar、模型、Ollama、应用签名和资源路径检查为 0 警告。

@@ -57,20 +57,22 @@ final class OverlayPanel: NSPanel {
 }
 
 final class SelectionTranslationPanel: NSPanel {
+    private var didPositionInitialFrame = false
+
     init(rootView: some View) {
         let hosting = NSHostingView(rootView: rootView)
-        let rect = NSRect(x: 0, y: 0, width: 600, height: 420)
+        let rect = NSRect(x: 0, y: 0, width: 620, height: 706)
         super.init(
             contentRect: rect,
-            styleMask: [.titled, .fullSizeContentView],
+            styleMask: [.borderless, .resizable],
             backing: .buffered,
             defer: false
         )
 
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
+        titlebarSeparatorStyle = .none
         isReleasedWhenClosed = false
-        isMovableByWindowBackground = false
         isFloatingPanel = true
         level = .floating
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -79,6 +81,14 @@ final class SelectionTranslationPanel: NSPanel {
         hasShadow = true
         hidesOnDeactivate = false
         isMovableByWindowBackground = true
+        minSize = NSSize(width: 560, height: 520)
+        maxSize = NSSize(width: 920, height: 1000)
+        animationBehavior = .utilityWindow
+        appearance = NSAppearance(named: .darkAqua)
+
+        standardWindowButton(.closeButton)?.isHidden = true
+        standardWindowButton(.miniaturizeButton)?.isHidden = true
+        standardWindowButton(.zoomButton)?.isHidden = true
 
         contentView = hosting
     }
@@ -87,7 +97,11 @@ final class SelectionTranslationPanel: NSPanel {
     override var canBecomeMain: Bool { true }
 
     func show() {
-        positionCenter()
+        if !didPositionInitialFrame {
+            positionCenter()
+            didPositionInitialFrame = true
+        }
+        NSApp.activate(ignoringOtherApps: true)
         makeKeyAndOrderFront(nil)
     }
 

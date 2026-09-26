@@ -1,16 +1,24 @@
+import asyncio
+import hashlib
+import importlib.metadata
 import os
 import sys
 import tempfile
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 import uvicorn
 import numpy as np
 import soundfile as sf
 
+from inference_queue import SingleFlightInference
+
 MODEL_ID = os.getenv("ASR_MODEL_ID", "mlx-community/GLM-ASR-Nano-2512-8bit")
+LOCAL_TOKEN = os.getenv("VOICEOPS_LOCAL_TOKEN", "")
+SERVICE_NAME = "voiceops-asr-mlx"
+PROTOCOL_VERSION = 1
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 
@@ -94,9 +102,35 @@ _ensure_glmasr_no_torch_compat()
 from mlx_audio.stt.utils import load_model
 
 app = FastAPI(title="ASR MLX Sidecar")
+inference_queue = SingleFlightInference()
+
+
+def _model_hash() -> str:
+    explicit = os.getenv("ASR_MODEL_HASH", "").strip()
+    if explicit:
+        return explicit
+    cache_root = Path(
+        os.getenv("HF_HUB_CACHE")
+        or (Path(os.getenv("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub")
+    )
+    cache_name = "models--" + MODEL_ID.replace("/", "--")
+    revision_ref = cache_root / cache_name / "refs" / "main"
+    if revision_ref.exists():
+        try:
+            return revision_ref.read_text(encoding="utf-8").strip()
+        except OSError:
+            pass
+    return hashlib.sha256(MODEL_ID.encode("utf-8")).hexdigest()
+
+
+MODEL_HASH = _model_hash()
+try:
+    RUNTIME_VERSION = importlib.metadata.version("mlx-audio")
+except importlib.metadata.PackageNotFoundError:
+    RUNTIME_VERSION = "unknown"
 
 print(f"[asr] loading model: {MODEL_ID}")
-_model = load_model(MODEL_ID)
+_model = inference_queue.run(lambda: load_model(MODEL_ID)).value
 print("[asr] model ready")
 
 
@@ -119,16 +153,34 @@ def _warm_up_model() -> None:
         pass
 
 
-_warm_up_model()
+inference_queue.run(_warm_up_model)
 
 
 class TranscribeResp(BaseModel):
     text: str
+    queue_ms: int
+    infer_ms: int
+    total_ms: int
+    model_id: str = MODEL_ID
+    model_hash: str = MODEL_HASH
+
+
+def _authorize(request: Request) -> None:
+    if LOCAL_TOKEN and request.headers.get("authorization") != f"Bearer {LOCAL_TOKEN}":
+        raise HTTPException(status_code=401, detail="invalid local token")
 
 
 @app.get("/health")
-def health():
-    return {"status": "ok", "model": MODEL_ID}
+def health(request: Request):
+    _authorize(request)
+    return {
+        "status": "ok",
+        "service": SERVICE_NAME,
+        "protocol_version": PROTOCOL_VERSION,
+        "model_id": MODEL_ID,
+        "model_hash": MODEL_HASH,
+        "runtime_version": RUNTIME_VERSION,
+    }
 
 
 def _trim_silence(path: str, top_db: float = 40.0) -> int:
@@ -176,73 +228,95 @@ def _trim_silence(path: str, top_db: float = 40.0) -> int:
     return int(trimmed.size)
 
 
+def _generate_text(path: str) -> str:
+    try:
+        result = _model.generate(path, verbose=False)
+    except ValueError as exc:
+        if "Input is too short" in str(exc):
+            return ""
+        raise
+
+    if isinstance(result, dict):
+        text = (result.get("text", "") or "").strip()
+        segments = result.get("segments")
+    else:
+        text = (getattr(result, "text", "") or "").strip()
+        segments = getattr(result, "segments", None)
+    if not text and segments:
+        try:
+            text = " ".join(segment.get("text", "").strip() for segment in segments).strip()
+        except Exception:
+            return ""
+    return text
+
+
+async def _transcribe_path(tmp_path: str, byte_len: int, recv_ms: int, write_ms: int) -> TranscribeResp:
+    total_started = time.perf_counter()
+    trim_started = time.perf_counter()
+    trimmed_len = await asyncio.to_thread(_trim_silence, tmp_path)
+    trim_ms = int((time.perf_counter() - trim_started) * 1000)
+
+    if 0 <= trimmed_len < 400:
+        timing_queue_ms = 0
+        timing_infer_ms = 0
+        text = ""
+    else:
+        timing = await inference_queue.run_async(lambda: _generate_text(tmp_path))
+        timing_queue_ms = timing.queue_ms
+        timing_infer_ms = timing.infer_ms
+        text = timing.value
+
+    total_ms = int((time.perf_counter() - total_started) * 1000) + recv_ms + write_ms
+    print(
+        f"[asr_perf] bytes={byte_len} recv_ms={recv_ms} write_ms={write_ms} "
+        f"trim_ms={trim_ms} queue_ms={timing_queue_ms} infer_ms={timing_infer_ms} "
+        f"total_ms={total_ms} trimmed={trimmed_len}"
+    )
+    return TranscribeResp(
+        text=text,
+        queue_ms=timing_queue_ms,
+        infer_ms=timing_infer_ms,
+        total_ms=total_ms,
+    )
+
+
 @app.post("/v1/asr/transcribe", response_model=TranscribeResp)
-async def transcribe(file: UploadFile = File(...)):
-    t0 = time.perf_counter()
-    suffix = ".wav" if file.filename.endswith(".wav") else ".wav"
+async def transcribe(request: Request, file: UploadFile = File(...)):
+    _authorize(request)
+    receive_started = time.perf_counter()
     data = await file.read()
-    t1 = time.perf_counter()
-    byte_len = len(data)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as fp:
+    recv_ms = int((time.perf_counter() - receive_started) * 1000)
+    write_started = time.perf_counter()
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as fp:
         fp.write(data)
         tmp_path = fp.name
-    t2 = time.perf_counter()
-
+    write_ms = int((time.perf_counter() - write_started) * 1000)
     try:
-        trimmed_len = _trim_silence(tmp_path)
-        t3 = time.perf_counter()
-        if 0 <= trimmed_len < 400:
-            total_ms = int((time.perf_counter() - t0) * 1000)
-            recv_ms = int((t1 - t0) * 1000)
-            write_ms = int((t2 - t1) * 1000)
-            trim_ms = int((t3 - t2) * 1000)
-            print(
-                f"[asr_perf] bytes={byte_len} recv_ms={recv_ms} write_ms={write_ms} "
-                f"trim_ms={trim_ms} infer_ms=0 total_ms={total_ms} trimmed={trimmed_len}"
-            )
-            return TranscribeResp(text="")
-
-        try:
-            t4 = time.perf_counter()
-            res = _model.generate(tmp_path, verbose=False)
-            t5 = time.perf_counter()
-        except ValueError as exc:
-            if "Input is too short" in str(exc):
-                total_ms = int((time.perf_counter() - t0) * 1000)
-                recv_ms = int((t1 - t0) * 1000)
-                write_ms = int((t2 - t1) * 1000)
-                trim_ms = int((t3 - t2) * 1000)
-                print(
-                    f"[asr_perf] bytes={byte_len} recv_ms={recv_ms} write_ms={write_ms} "
-                    f"trim_ms={trim_ms} infer_ms=0 total_ms={total_ms} trimmed={trimmed_len}"
-                )
-                return TranscribeResp(text="")
-            raise
-        if isinstance(res, dict):
-            text = (res.get("text", "") or "").strip()
-            segments = res.get("segments")
-        else:
-            text = (getattr(res, "text", "") or "").strip()
-            segments = getattr(res, "segments", None)
-        if not text and segments:
-            try:
-                text = " ".join(seg.get("text", "").strip() for seg in segments).strip()
-            except Exception:
-                text = ""
-        total_ms = int((time.perf_counter() - t0) * 1000)
-        recv_ms = int((t1 - t0) * 1000)
-        write_ms = int((t2 - t1) * 1000)
-        trim_ms = int((t3 - t2) * 1000)
-        infer_ms = int((t5 - t4) * 1000)
-        print(
-            f"[asr_perf] bytes={byte_len} recv_ms={recv_ms} write_ms={write_ms} "
-            f"trim_ms={trim_ms} infer_ms={infer_ms} total_ms={total_ms} trimmed={trimmed_len}"
-        )
-        return TranscribeResp(text=text)
+        return await _transcribe_path(tmp_path, len(data), recv_ms, write_ms)
     finally:
         try:
             os.remove(tmp_path)
-        except Exception:
+        except OSError:
+            pass
+
+
+@app.post("/v1/asr/transcribe-wav", response_model=TranscribeResp)
+async def transcribe_wav(request: Request):
+    _authorize(request)
+    receive_started = time.perf_counter()
+    byte_len = 0
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as fp:
+        tmp_path = fp.name
+        async for chunk in request.stream():
+            byte_len += len(chunk)
+            fp.write(chunk)
+    recv_ms = int((time.perf_counter() - receive_started) * 1000)
+    try:
+        return await _transcribe_path(tmp_path, byte_len, recv_ms, 0)
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
             pass
 
 

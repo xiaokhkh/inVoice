@@ -1,8 +1,14 @@
 import Foundation
 
-final class LLMRouter {
+protocol DictationLLMRouting {
+    func warmUp(mode: DictationPostProcessMode) async -> Int?
+    func route(text: String, mode: DictationPostProcessMode) async -> LLMRouter.RoutedResult
+}
+
+final class LLMRouter: DictationLLMRouting {
     enum Action: String {
         case translate = "TRANSLATE"
+        case polish = "POLISH"
         case direct = "DIRECT"
     }
 
@@ -13,6 +19,9 @@ final class LLMRouter {
         let offlineUsed: Bool
         let modelUsed: String
         let offlineLatencyMs: Int?
+        let loadMs: Int?
+        let promptEvalMs: Int?
+        let generateMs: Int?
         let codexLatencyMs: Int?
     }
 
@@ -22,22 +31,43 @@ final class LLMRouter {
         self.offlineClient = offlineClient
     }
 
-    func warmUp() async {
-        await offlineClient.warmUp()
+    func warmUp(mode: DictationPostProcessMode) async -> Int? {
+        let action = DictationPostProcessPolicy().action(for: mode)
+        guard action.requiresLLM else { return 0 }
+        return await offlineClient.warmUp()
     }
 
-    func route(text: String) async -> RoutedResult {
+    func route(text: String, mode: DictationPostProcessMode) async -> RoutedResult {
+        let postProcessAction = DictationPostProcessPolicy().action(for: mode)
+        if postProcessAction == .direct {
+            return RoutedResult(
+                text: text,
+                action: .direct,
+                reason: nil,
+                offlineUsed: false,
+                modelUsed: "none",
+                offlineLatencyMs: 0,
+                loadMs: 0,
+                promptEvalMs: 0,
+                generateMs: 0,
+                codexLatencyMs: nil
+            )
+        }
+
         let offlineStart = CFAbsoluteTimeGetCurrent()
         var offlineLatency: Int?
         let modelName = offlineClient.modelName
 
         do {
-            let translated = try await offlineClient.translate(text: text, profile: .voice)
+            let profile: OfflineLLMClient.PromptProfile = mode == .polishSameLanguage
+                ? .voicePolish
+                : .voice
+            let generation = try await offlineClient.translateDetailed(text: text, profile: profile)
             offlineLatency = Int((CFAbsoluteTimeGetCurrent() - offlineStart) * 1000)
-            let finalText = translated.isEmpty ? text : translated
+            let finalText = generation.text.isEmpty ? text : generation.text
             logDecision(
                 offlineUsed: true,
-                action: .translate,
+                action: mode == .polishSameLanguage ? .polish : .translate,
                 reason: nil,
                 modelUsed: modelName,
                 offlineLatency: offlineLatency,
@@ -45,11 +75,14 @@ final class LLMRouter {
             )
             return RoutedResult(
                 text: finalText,
-                action: .translate,
+                action: mode == .polishSameLanguage ? .polish : .translate,
                 reason: nil,
                 offlineUsed: true,
                 modelUsed: modelName,
                 offlineLatencyMs: offlineLatency,
+                loadMs: generation.loadMs,
+                promptEvalMs: generation.promptEvalMs,
+                generateMs: generation.generateMs,
                 codexLatencyMs: nil
             )
         } catch {
@@ -69,6 +102,9 @@ final class LLMRouter {
                 offlineUsed: false,
                 modelUsed: modelName,
                 offlineLatencyMs: offlineLatency,
+                loadMs: nil,
+                promptEvalMs: nil,
+                generateMs: nil,
                 codexLatencyMs: nil
             )
         }

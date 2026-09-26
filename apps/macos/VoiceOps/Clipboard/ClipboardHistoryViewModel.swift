@@ -12,6 +12,14 @@ final class ClipboardHistoryViewModel: ObservableObject {
     private var observer: Any?
     private let maxItems = 200
     private var imageMetaCache: [UUID: String] = [:]
+    private var refreshGeneration = 0
+    private var searchWorkItem: DispatchWorkItem?
+    private let imageCache: NSCache<NSUUID, NSImage> = {
+        let cache = NSCache<NSUUID, NSImage>()
+        cache.countLimit = 30
+        cache.totalCostLimit = 48 * 1024 * 1024
+        return cache
+    }()
 
     init(store: ClipboardStore = .shared, injector: FocusInjector? = nil) {
         self.store = store
@@ -35,6 +43,9 @@ final class ClipboardHistoryViewModel: ObservableObject {
     }
 
     func refresh(resetSelection: Bool) {
+        refreshGeneration &+= 1
+        let generation = refreshGeneration
+        let selectionID = selectedItem()?.id
         let query = self.query
         let store = self.store
         let maxItems = self.maxItems
@@ -46,11 +57,9 @@ final class ClipboardHistoryViewModel: ObservableObject {
                 items = store.searchText(query, limit: maxItems)
             }
             DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
+                guard let self, self.refreshGeneration == generation, self.query == query else { return }
                 self.items = items
-                if resetSelection || self.selectedIndex >= items.count {
-                    self.selectedIndex = items.isEmpty ? 0 : 0
-                }
+                self.selectedIndex = resetSelection ? 0 : (items.firstIndex { $0.id == selectionID } ?? 0)
                 let ids = Set(items.map { $0.id })
                 self.imageMetaCache = self.imageMetaCache.filter { ids.contains($0.key) }
             }
@@ -61,7 +70,11 @@ final class ClipboardHistoryViewModel: ObservableObject {
         let trimmed = value.trimmingCharacters(in: .newlines)
         if trimmed == query { return }
         query = trimmed
-        refresh(resetSelection: true)
+        refreshGeneration &+= 1
+        searchWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.refresh(resetSelection: true) }
+        searchWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
     }
 
     func appendQuery(_ value: String) {
@@ -71,8 +84,7 @@ final class ClipboardHistoryViewModel: ObservableObject {
 
     func deleteQueryBackward() {
         guard !query.isEmpty else { return }
-        query.removeLast()
-        refresh(resetSelection: true)
+        setQuery(String(query.dropLast()))
     }
 
     func clearQuery() {
@@ -228,14 +240,18 @@ final class ClipboardHistoryViewModel: ObservableObject {
 
     func previewImage(for item: ClipboardItem) -> NSImage? {
         guard item.type == .image else { return nil }
-        if let path = item.contentImagePath, let image = NSImage(contentsOfFile: path) {
-            return image
-        }
-        if let path = item.contentOriginalPath, let image = NSImage(contentsOfFile: path) {
-            return image
-        }
-        guard let data = loadImageData(for: item) else { return nil }
-        return decodedImage(from: data)
+        if let cached = imageCache.object(forKey: item.id as NSUUID) { return cached }
+        guard let path = item.contentImagePath ?? item.contentOriginalPath,
+              let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: 1000,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+              ] as CFDictionary) else { return nil }
+        let image = NSImage(cgImage: thumbnail, size: .zero)
+        imageCache.setObject(image, forKey: item.id as NSUUID, cost: thumbnail.bytesPerRow * thumbnail.height)
+        return image
     }
 
     private func revealImageInFinder(_ item: ClipboardItem) -> Bool {
@@ -278,10 +294,10 @@ final class ClipboardHistoryViewModel: ObservableObject {
         }
         guard let path = item.contentImagePath else { return nil }
         let url = URL(fileURLWithPath: path)
-        guard let data = try? Data(contentsOf: url),
-              let rep = NSBitmapImageRep(data: data) else { return nil }
-        let width = rep.pixelsWide
-        let height = rep.pixelsHigh
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int else { return nil }
         let ext = url.pathExtension.isEmpty ? "IMG" : url.pathExtension.uppercased()
         let meta = "\(ext) · \(width)x\(height)"
         imageMetaCache[item.id] = meta

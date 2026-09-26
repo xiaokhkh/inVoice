@@ -3,7 +3,7 @@ set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_DIR="${VOICEOPS_INSTALL_DIR:-${HOME}/Applications}"
-OLLAMA_MODEL="${VOICEOPS_OLLAMA_MODEL:-qwen2.5-coder:7b-instruct-q5_1}"
+OLLAMA_MODEL="${VOICEOPS_OLLAMA_MODEL:-qwen3.6:35b-a3b-coding}"
 ISSUES=0
 WARNINGS=0
 
@@ -78,16 +78,33 @@ check_sidecars() {
     fi
   done
 
-  if curl --silent --fail --max-time 2 http://127.0.0.1:8765/health >/dev/null 2>&1; then
-    ok "Final ASR is listening on 127.0.0.1:8765"
-  else
-    issue "Final ASR is offline; launch inVoice and inspect ~/Library/Logs/VoiceOps/sidecar_asr_mlx.log"
-  fi
-  if curl --silent --fail --max-time 2 http://127.0.0.1:8790/health >/dev/null 2>&1; then
-    ok "Streaming ASR is listening on 127.0.0.1:8790"
-  else
-    issue "Streaming ASR is offline; launch inVoice and inspect ~/Library/Logs/VoiceOps/sidecar_fast_asr.log"
-  fi
+  # Read the token inside Python: it never appears in command arguments or output.
+  for name in asr_mlx fast_asr; do
+    if python3 - "$name" <<'HEALTH'
+import json, subprocess, sys, urllib.request
+name = sys.argv[1]
+port, service = (8765, "voiceops-asr-mlx") if name == "asr_mlx" else (8790, "voiceops-fast-asr")
+try:
+    token = subprocess.check_output(
+        ["defaults", "read", "com.voiceops.VoiceOps", "voiceops.sidecar.localToken"],
+        text=True, stderr=subprocess.DEVNULL,
+    ).strip()
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/health", headers={"Authorization": "Bearer " + token}
+    )
+    with urllib.request.urlopen(request, timeout=2) as response:
+        payload = json.load(response)
+    valid = payload.get("status") == "ok" and payload.get("service") == service and payload.get("protocol_version") == 1
+    sys.exit(0 if valid else 1)
+except Exception:
+    sys.exit(1)
+HEALTH
+    then
+      ok "$name is authenticated and ready"
+    else
+      issue "$name is unavailable or incompatible; open inVoice > Permissions & Diagnostics"
+    fi
+  done
 }
 
 check_models() {

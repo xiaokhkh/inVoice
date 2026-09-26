@@ -3,6 +3,11 @@ import AudioToolbox
 import CoreAudio
 
 final class AudioCaptureService: @unchecked Sendable {
+    struct CaptureResult: Sendable {
+        let wavURL: URL
+        let totalFrames: AVAudioFramePosition
+    }
+
     private static let preferredInputDeviceName = "MLX Voice Mic"
     private static let preferredInputManufacturer = "MLX VoiceOps"
 
@@ -14,21 +19,19 @@ final class AudioCaptureService: @unchecked Sendable {
     private var chunkFrameLimit: AVAudioFramePosition = 0
     private var onTick: (() -> Void)?
     private var onChunk: ((Data, AVAudioFrameCount) -> Void)?
-    private var storeStreamingBuffers = true
     private var streamingEnabled = false
-    private var bufferingEnabled = false
     private var targetFormat: AVAudioFormat?
     private var inputFormat: AVAudioFormat?
     private var converter: AVAudioConverter?
-    private var streamingBuffers: [AVAudioPCMBuffer] = []
     private var streamingTotalFrames: AVAudioFramePosition = 0
+    private var activeProvider: VoiceInputProvider?
 
     func start(
+        provider: VoiceInputProvider = .usbAudio,
         streaming: Bool,
         chunkDuration: TimeInterval = 1.5,
         onTick: (() -> Void)? = nil,
         onChunk: ((Data, AVAudioFrameCount) -> Void)? = nil,
-        storeBuffers: Bool = true,
         writeToFile: Bool = true
     ) throws {
         let target = AVAudioFormat(
@@ -56,20 +59,23 @@ final class AudioCaptureService: @unchecked Sendable {
         streamingEnabled = streaming
         self.onTick = onTick
         self.onChunk = onChunk
-        storeStreamingBuffers = storeBuffers
-        bufferingEnabled = storeBuffers
         chunkFrames = 0
         chunkFrameLimit = AVAudioFramePosition(target.sampleRate * chunkDuration)
         targetFormat = target
-        streamingBuffers = []
         streamingTotalFrames = 0
+        activeProvider = provider
+
+        inputFormat = nil
+        converter = nil
+
+        guard provider == .usbAudio else {
+            NSLog("VoiceOps: receiving microphone audio from the wireless StopWatch provider")
+            return
+        }
 
         engine.stop()
         engine.reset()
         engine = AVAudioEngine()
-
-        inputFormat = nil
-        converter = nil
 
         let input = engine.inputNode
         selectPreferredInputDevice(for: input)
@@ -91,115 +97,82 @@ final class AudioCaptureService: @unchecked Sendable {
     }
 
     func stop() throws -> URL {
-        guard let url = outputURL else {
+        try stopAndDrain().wavURL
+    }
+
+    /// Stops capture and waits until every buffer already accepted by the tap
+    /// has been written and scheduled for streaming delivery.
+    func stopAndDrain() throws -> CaptureResult {
+        if activeProvider == .usbAudio {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+        }
+        converter = nil
+        inputFormat = nil
+        activeProvider = nil
+        let result: CaptureResult? = audioQueue.sync {
+            self.outputFile = nil
+            guard let url = self.outputURL else { return nil }
+            self.outputURL = nil
+            return CaptureResult(wavURL: url, totalFrames: self.streamingTotalFrames)
+        }
+        guard let result else {
             throw NSError(domain: "AudioCaptureService", code: 1)
         }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        outputFile = nil
-        outputURL = nil
-        converter = nil
-        inputFormat = nil
-        return url
-    }
-
-    func stopAndGetWavData() throws -> (Data, AVAudioFramePosition) {
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        outputFile = nil
-        outputURL = nil
-        converter = nil
-        inputFormat = nil
-
-        guard bufferingEnabled, let format = targetFormat else {
-            throw NSError(domain: "AudioCaptureService", code: 2)
-        }
-
-        let snapshot: ([AVAudioPCMBuffer], AVAudioFramePosition) = audioQueue.sync {
-            return (self.streamingBuffers, self.streamingTotalFrames)
-        }
-        let buffers = snapshot.0
-        let totalFrames = snapshot.1
-        guard !buffers.isEmpty else {
-            throw NSError(domain: "AudioCaptureService", code: 3)
-        }
-
-        let wavData = buildWavData(buffers: buffers, format: format)
-        return (wavData, totalFrames)
-    }
-
-    func stopStreaming() throws {
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        outputFile = nil
-        outputURL = nil
-        converter = nil
-        inputFormat = nil
-    }
-
-    func snapshotStreamingAudio() async throws -> (URL, AVAudioFramePosition)? {
-        guard streamingEnabled, let format = targetFormat else { return nil }
-
-        let snapshot: ([AVAudioPCMBuffer], AVAudioFramePosition) = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<([AVAudioPCMBuffer], AVAudioFramePosition), Error>) in
-            audioQueue.async { [weak self] in
-                guard let self else {
-                    cont.resume(throwing: NSError(domain: "AudioCaptureService", code: 2))
-                    return
-                }
-                cont.resume(returning: (self.streamingBuffers, self.streamingTotalFrames))
-            }
-        }
-
-        let buffers = snapshot.0
-        let totalFrames = snapshot.1
-        guard !buffers.isEmpty else { return nil }
-
-        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<(URL, AVAudioFramePosition), Error>) in
-            DispatchQueue.global(qos: .userInitiated).async {
-                do {
-                    let url = FileManager.default.temporaryDirectory
-                        .appendingPathComponent("voiceops_stream_\(UUID().uuidString).wav")
-                    let file = try AVAudioFile(
-                        forWriting: url,
-                        settings: format.settings,
-                        commonFormat: format.commonFormat,
-                        interleaved: format.isInterleaved
-                    )
-                    for buffer in buffers {
-                        try file.write(from: buffer)
-                    }
-                    cont.resume(returning: (url, totalFrames))
-                } catch {
-                    cont.resume(throwing: error)
-                }
-            }
-        }
+        return result
     }
 
     func resetStreamingState() {
         streamingEnabled = false
         onTick = nil
         onChunk = nil
-        storeStreamingBuffers = true
-        bufferingEnabled = false
         chunkFrames = 0
         chunkFrameLimit = 0
-        streamingBuffers = []
         streamingTotalFrames = 0
     }
 
     func cancel() {
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        if let url = outputURL {
+        if activeProvider == .usbAudio {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+        }
+        activeProvider = nil
+        let url: URL? = audioQueue.sync {
+            self.outputFile = nil
+            let url = self.outputURL
+            self.outputURL = nil
+            return url
+        }
+        if let url {
             try? FileManager.default.removeItem(at: url)
         }
-        outputFile = nil
-        outputURL = nil
         chunkFrames = 0
         converter = nil
         inputFormat = nil
         resetStreamingState()
+    }
+
+    func appendWirelessAudio(_ packet: WirelessVoiceAudioPacket) {
+        guard activeProvider == .wirelessStopWatch,
+              let format = AVAudioFormat(
+                  commonFormat: .pcmFormatInt16,
+                  sampleRate: Double(packet.sampleRate),
+                  channels: 1,
+                  interleaved: false
+              ),
+              let buffer = AVAudioPCMBuffer(
+                  pcmFormat: format,
+                  frameCapacity: AVAudioFrameCount(packet.sampleCount)
+              ),
+              let channel = buffer.int16ChannelData?[0] else {
+            return
+        }
+        buffer.frameLength = AVAudioFrameCount(packet.sampleCount)
+        packet.pcm16LE.withUnsafeBytes { bytes in
+            guard let source = bytes.baseAddress else { return }
+            memcpy(channel, source, bytes.count)
+        }
+        handleBuffer(buffer)
     }
 
     private func handleBuffer(_ buffer: AVAudioPCMBuffer) {
@@ -242,12 +215,7 @@ final class AudioCaptureService: @unchecked Sendable {
             guard let self else { return }
             try? self.outputFile?.write(from: copy)
 
-            if self.bufferingEnabled {
-                if self.storeStreamingBuffers {
-                    self.streamingBuffers.append(copy)
-                }
-                self.streamingTotalFrames += AVAudioFramePosition(copy.frameLength)
-            }
+            self.streamingTotalFrames += AVAudioFramePosition(copy.frameLength)
 
             guard self.streamingEnabled else { return }
             self.chunkFrames += AVAudioFramePosition(copy.frameLength)
@@ -270,49 +238,6 @@ final class AudioCaptureService: @unchecked Sendable {
                 }
             }
         }
-    }
-
-    private func buildWavData(buffers: [AVAudioPCMBuffer], format: AVAudioFormat) -> Data {
-        let channels = Int(format.channelCount)
-        let sampleRate = Int(format.sampleRate)
-        let bitsPerSample = 32
-        let bytesPerSample = bitsPerSample / 8
-
-        var dataSize = 0
-        for buffer in buffers {
-            dataSize += Int(buffer.frameLength) * bytesPerSample
-        }
-
-        var data = Data()
-        data.reserveCapacity(44 + dataSize)
-
-        func append<T: FixedWidthInteger>(_ value: T) {
-            var v = value.littleEndian
-            data.append(Data(bytes: &v, count: MemoryLayout<T>.size))
-        }
-
-        data.append("RIFF".data(using: .ascii)!)
-        append(UInt32(36 + dataSize))
-        data.append("WAVE".data(using: .ascii)!)
-        data.append("fmt ".data(using: .ascii)!)
-        append(UInt32(16))
-        append(UInt16(3)) // IEEE float
-        append(UInt16(channels))
-        append(UInt32(sampleRate))
-        append(UInt32(sampleRate * channels * bytesPerSample))
-        append(UInt16(channels * bytesPerSample))
-        append(UInt16(bitsPerSample))
-        data.append("data".data(using: .ascii)!)
-        append(UInt32(dataSize))
-
-        for buffer in buffers {
-            guard let channel = buffer.floatChannelData else { continue }
-            let frames = Int(buffer.frameLength)
-            let byteCount = frames * bytesPerSample
-            data.append(Data(bytes: channel[0], count: byteCount))
-        }
-
-        return data
     }
 
     private func refreshConverterIfNeeded(input: AVAudioFormat, target: AVAudioFormat) {

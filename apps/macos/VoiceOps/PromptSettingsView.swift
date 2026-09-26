@@ -6,39 +6,47 @@ struct PromptSettingsView: View {
     @AppStorage(OfflineLLMClient.translationUserPromptDefaultsKey) private var translationUserPrompt = ""
     @AppStorage(OfflineLLMClient.voiceSystemPromptDefaultsKey) private var voiceSystemPrompt = ""
     @AppStorage(OfflineLLMClient.voiceUserPromptDefaultsKey) private var voiceUserPrompt = ""
+    @AppStorage(OfflineLLMClient.voicePolishSystemPromptDefaultsKey) private var voicePolishSystemPrompt = ""
+    @AppStorage(OfflineLLMClient.voicePolishUserPromptDefaultsKey) private var voicePolishUserPrompt = ""
     @AppStorage(OfflineLLMClient.actionSystemPromptDefaultsKey) private var actionSystemPrompt = ""
     @AppStorage(OfflineLLMClient.actionUserPromptDefaultsKey) private var actionUserPrompt = ""
     @State private var installedModels = [OfflineLLMClient.defaultModel]
-    @State private var modelStatusText = "Checking…"
+    @State private var modelStatusText = "检查中…"
     @State private var modelStatusColor = Color.secondary
-    @State private var modelDetailsText = "Connecting to Ollama on 127.0.0.1:11434"
+    @State private var modelDetailsText = "正在连接这台 Mac 上的 Ollama"
     @State private var isRefreshingModel = false
+    @State private var confirmReset = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Text("LLM Prompts")
+                        Text("本地 AI")
                             .font(.title2.weight(.semibold))
                         Spacer()
-                        Button("Reset All") {
+                        Button("恢复全部默认提示词") { confirmReset = true }
+                        .confirmationDialog("恢复全部默认提示词？自定义内容将被替换。", isPresented: $confirmReset) {
+                            Button("恢复默认", role: .destructive) {
                             translationSystemPrompt = OfflineLLMClient.defaultTranslationSystemPrompt
                             translationUserPrompt = OfflineLLMClient.defaultTranslationUserPromptTemplate
                             voiceSystemPrompt = OfflineLLMClient.defaultVoiceSystemPrompt
                             voiceUserPrompt = OfflineLLMClient.defaultVoiceUserPromptTemplate
+                            voicePolishSystemPrompt = OfflineLLMClient.defaultVoicePolishSystemPrompt
+                            voicePolishUserPrompt = OfflineLLMClient.defaultVoicePolishUserPromptTemplate
                             actionSystemPrompt = OfflineLLMClient.defaultActionSystemPrompt
                             actionUserPrompt = OfflineLLMClient.defaultActionUserPromptTemplate
+                            }
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                     }
-                    Text("Tune how the local Ollama model translates text and handles voice input.")
+                    Text("选择文字处理模型；展开下方选项可定制翻译、润色与摘要的风格。")
                         .font(.callout)
                         .foregroundColor(.secondary)
                 }
 
-                PromptSection(title: "Local Model", subtitle: "The real Ollama model shared by every LLM feature.") {
+                PromptSection(title: "本地模型", subtitle: "文字整理、翻译与助手共用这个模型。") {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(spacing: 8) {
                             Circle()
@@ -47,14 +55,14 @@ struct PromptSettingsView: View {
                             Text(modelStatusText)
                                 .font(.subheadline.weight(.semibold))
                             Spacer()
-                            Button("Refresh") {
+                            Button("刷新") {
                                 Task { await refreshModelStatus() }
                             }
                             .disabled(isRefreshingModel)
                             .controlSize(.small)
                         }
 
-                        Picker("Model", selection: $selectedModel) {
+                        Picker("模型", selection: $selectedModel) {
                             ForEach(modelChoices, id: \.self) { model in
                                 Text(model).tag(model)
                             }
@@ -67,46 +75,61 @@ struct PromptSettingsView: View {
                     }
                 }
 
-                PromptSection(title: "Translation", subtitle: "Used when translating selected text.") {
+                PromptSection(title: "翻译", subtitle: "默认英文 → 简体中文，支持自定义。") {
                     PromptCard(
-                        title: "System Prompt",
-                        caption: "Defines tone, constraints, and output style.",
+                        title: "系统提示词",
+                        caption: "设置语气、约束与输出风格。",
                         text: $translationSystemPrompt,
                         minHeight: 190
                     )
                     PromptCard(
-                        title: "User Template",
-                        caption: "Use `{{text}}` as the placeholder for the selected text.",
+                        title: "输入模板",
+                        caption: "用 {{text}} 代表选中的文字。",
                         text: $translationUserPrompt,
                         minHeight: 150
                     )
                 }
 
-                PromptSection(title: "Voice", subtitle: "Used for spoken input processing.") {
+                PromptSection(title: "英文润色", subtitle: "用于把中文语音转为英文，或润色英文。") {
                     PromptCard(
-                        title: "System Prompt",
-                        caption: "Sets the voice workflow behavior.",
+                        title: "系统提示词",
+                        caption: "设置语音输入的处理方式。",
                         text: $voiceSystemPrompt,
                         minHeight: 190
                     )
                     PromptCard(
-                        title: "User Template",
-                        caption: "Use `{{text}}` as the placeholder for the spoken input.",
+                        title: "输入模板",
+                        caption: "用 {{text}} 代表识别到的语音内容。",
                         text: $voiceUserPrompt,
                         minHeight: 150
                     )
                 }
 
-                PromptSection(title: "Action", subtitle: "Used when turning spoken notes into TODO items.") {
+                PromptSection(title: "轻度整理", subtitle: "保留输入语言，整理口头语和标点。") {
                     PromptCard(
-                        title: "System Prompt",
-                        caption: "Defines the action-summary structure and constraints.",
+                        title: "系统提示词",
+                        caption: "保留语言与意思，仅优化表达。",
+                        text: $voicePolishSystemPrompt,
+                        minHeight: 170
+                    )
+                    PromptCard(
+                        title: "输入模板",
+                        caption: "用 {{text}} 代表识别到的语音内容。",
+                        text: $voicePolishUserPrompt,
+                        minHeight: 130
+                    )
+                }
+
+                PromptSection(title: "行动摘要", subtitle: "把口述内容整理成背景与待办事项。") {
+                    PromptCard(
+                        title: "系统提示词",
+                        caption: "设置行动摘要的结构与约束。",
                         text: $actionSystemPrompt,
                         minHeight: 170
                     )
                     PromptCard(
-                        title: "User Template",
-                        caption: "Use `{{text}}` as the placeholder for the spoken note.",
+                        title: "输入模板",
+                        caption: "用 {{text}} 代表口述内容。",
                         text: $actionUserPrompt,
                         minHeight: 140
                     )
@@ -115,6 +138,9 @@ struct PromptSettingsView: View {
             .padding(20)
         }
         .onAppear {
+            if OfflineLLMClient.previousDefaultModels.contains(selectedModel) {
+                selectedModel = OfflineLLMClient.defaultModel
+            }
             if translationSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 translationSystemPrompt = OfflineLLMClient.defaultTranslationSystemPrompt
             }
@@ -126,6 +152,12 @@ struct PromptSettingsView: View {
             }
             if voiceUserPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 voiceUserPrompt = OfflineLLMClient.defaultVoiceUserPromptTemplate
+            }
+            if voicePolishSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                voicePolishSystemPrompt = OfflineLLMClient.defaultVoicePolishSystemPrompt
+            }
+            if voicePolishUserPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                voicePolishUserPrompt = OfflineLLMClient.defaultVoicePolishUserPromptTemplate
             }
             if actionSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 actionSystemPrompt = OfflineLLMClient.defaultActionSystemPrompt
@@ -150,7 +182,7 @@ struct PromptSettingsView: View {
     private func refreshModelStatus() async {
         guard !isRefreshingModel else { return }
         isRefreshingModel = true
-        modelStatusText = "Checking…"
+        modelStatusText = "检查中…"
         modelStatusColor = .secondary
         defer { isRefreshingModel = false }
 
@@ -158,13 +190,13 @@ struct PromptSettingsView: View {
             let status = try await OfflineLLMClient().modelStatus()
             installedModels = status.installedModels
             if status.isLoaded {
-                modelStatusText = "Running on GPU"
+                modelStatusText = "已加载 · 可以使用"
                 modelStatusColor = .green
             } else if status.isInstalled {
-                modelStatusText = "Installed · idle"
+                modelStatusText = "已安装 · 首次使用时加载"
                 modelStatusColor = .orange
             } else {
-                modelStatusText = "Model not installed"
+                modelStatusText = "尚未安装此模型"
                 modelStatusColor = .red
             }
 
@@ -183,9 +215,9 @@ struct PromptSettingsView: View {
             }
             modelDetailsText = details.joined(separator: " · ")
         } catch {
-            modelStatusText = "Ollama unavailable"
+            modelStatusText = "本地文字服务未启动"
             modelStatusColor = .red
-            modelDetailsText = "Start Ollama on 127.0.0.1:11434, then refresh."
+            modelDetailsText = "请先打开 Ollama，再点击刷新。"
         }
     }
 
@@ -198,6 +230,7 @@ private struct PromptSection<Content: View>: View {
     let title: String
     let subtitle: String
     let content: Content
+    @State private var isExpanded = false
 
     init(title: String, subtitle: String, @ViewBuilder content: () -> Content) {
         self.title = title
@@ -207,27 +240,26 @@ private struct PromptSection<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.headline)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            VStack(spacing: 12) {
+            if title == "本地模型" {
+                heading
                 content
+            } else {
+                DisclosureGroup(isExpanded: $isExpanded) {
+                    VStack(spacing: 12) { content }.padding(.top, 16)
+                } label: { heading }
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(nsColor: .windowBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.secondary.opacity(0.12))
-        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 13))
+        .overlay(RoundedRectangle(cornerRadius: 13).stroke(Color.primary.opacity(0.08)))
+    }
+
+    private var heading: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.headline)
+            Text(subtitle).font(.caption).foregroundStyle(.secondary)
+        }
     }
 }
 

@@ -10,6 +10,19 @@
 		AB1000000000000000000001 /* FnSessionStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000001 /* FnSessionStateMachine.swift */; };
 		AB1000000000000000000002 /* PasteboardTransaction.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000002 /* PasteboardTransaction.swift */; };
 		AB1000000000000000000003 /* PasteShortcutPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000003 /* PasteShortcutPlan.swift */; };
+		AB1000000000000000000004 /* TranslationPromptDefaults.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000004 /* TranslationPromptDefaults.swift */; };
+		AB1000000000000000000005 /* MarkdownDocumentParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000005 /* MarkdownDocumentParser.swift */; };
+		AB1000000000000000000006 /* DictationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000006 /* DictationPolicy.swift */; };
+		AB1000000000000000000007 /* SessionMetricV1.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000007 /* SessionMetricV1.swift */; };
+		AB1000000000000000000008 /* VoiceInputProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000008 /* VoiceInputProvider.swift */; };
+		AB1000000000000000000009 /* WirelessVoiceProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000009 /* WirelessVoiceProvider.swift */; };
+		AB1000000000000000000010 /* WirelessProvisioningService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000010 /* WirelessProvisioningService.swift */; };
+		AB1000000000000000000011 /* DeviceSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000011 /* DeviceSnapshot.swift */; };
+		AB1000000000000000000012 /* DeviceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000012 /* DeviceManager.swift */; };
+		AB1000000000000000000013 /* DeviceCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1000000000000000000013 /* DeviceCenterView.swift */; };
+		C0DE10000000000000000001 /* StreamingASRClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000001 /* StreamingASRClient.swift */; };
+		C0DE10000000000000000002 /* SessionMetricsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000002 /* SessionMetricsStore.swift */; };
+		C0DE10000000000000000003 /* DictationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000003 /* DictationSettingsView.swift */; };
 		B1B2C3D4E5F6010203040506 /* ClipboardItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010203040506 /* ClipboardItem.swift */; };
 		B1B2C3D4E5F6010203040507 /* ClipboardStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010203040507 /* ClipboardStore.swift */; };
 		B1B2C3D4E5F6010203040508 /* ClipboardObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010203040508 /* ClipboardObserver.swift */; };
@@ -34,7 +47,6 @@
 		BA4E2F22B05DD2EC0DBBA13F /* AppMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = B970B93884207D30F57EA30E /* AppMain.swift */; };
 		BE9AEBBC28458CABDE915BF0 /* CodexClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42533B4B80598A0615B7C95E /* CodexClient.swift */; };
 		C0F4FBA191EAD5787597F63F /* Permissions.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEBC051C45D226CE70A63109 /* Permissions.swift */; };
-		C41F4B9AA5E044CF2A275BC0 /* TextStabilizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D57F00751A65B115B24C5D4 /* TextStabilizer.swift */; };
 		D3440F588CEFA153F4AA21E8 /* AudioCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86E92C442DB27102F499F7E6 /* AudioCaptureService.swift */; };
 		D475445982227CA439F70464 /* FocusInjector.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF20785C9D7F331F84EEAD2B /* FocusInjector.swift */; };
 		E5401A720E00D4FAF227A942 /* LLMRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22A6147F3235591061E702C5 /* LLMRouter.swift */; };
@@ -43,12 +55,28 @@
 		F1261E36233BF186D5A8FC9A /* PreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94431E21EE9DD50FB959EB16 /* PreviewView.swift */; };
 		F9B9E3E1C5F9123456789ABD /* SidecarLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9B9E3E1C5F9123456789ABC /* SidecarLauncher.swift */; };
 		FA12BC34D5E6F708192A3B4C /* SelectionCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA12BC34D5E6F708192A3B4B /* SelectionCaptureService.swift */; };
+		C92510000000000000000001 /* ProductWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = C92500000000000000000001 /* ProductWorkspace.swift */; };
+		C92510000000000000000002 /* ProductStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = C92500000000000000000002 /* ProductStatus.swift */; };
+		C92510000000000000000003 /* ProductExperience.swift in Sources */ = {isa = PBXBuildFile; fileRef = C92500000000000000000003 /* ProductExperience.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		AA1000000000000000000001 /* FnSessionStateMachine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FnSessionStateMachine.swift; sourceTree = "<group>"; };
 		AA1000000000000000000002 /* PasteboardTransaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteboardTransaction.swift; sourceTree = "<group>"; };
 		AA1000000000000000000003 /* PasteShortcutPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteShortcutPlan.swift; sourceTree = "<group>"; };
+		AA1000000000000000000004 /* TranslationPromptDefaults.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslationPromptDefaults.swift; sourceTree = "<group>"; };
+		AA1000000000000000000005 /* MarkdownDocumentParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownDocumentParser.swift; sourceTree = "<group>"; };
+		AA1000000000000000000006 /* DictationPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationPolicy.swift; sourceTree = "<group>"; };
+		AA1000000000000000000007 /* SessionMetricV1.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionMetricV1.swift; sourceTree = "<group>"; };
+		AA1000000000000000000008 /* VoiceInputProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputProvider.swift; sourceTree = "<group>"; };
+		AA1000000000000000000009 /* WirelessVoiceProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WirelessVoiceProvider.swift; sourceTree = "<group>"; };
+		AA1000000000000000000010 /* WirelessProvisioningService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WirelessProvisioningService.swift; sourceTree = "<group>"; };
+		AA1000000000000000000011 /* DeviceSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSnapshot.swift; sourceTree = "<group>"; };
+		AA1000000000000000000012 /* DeviceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceManager.swift; sourceTree = "<group>"; };
+		AA1000000000000000000013 /* DeviceCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceCenterView.swift; sourceTree = "<group>"; };
+		C0DE00000000000000000001 /* StreamingASRClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingASRClient.swift; sourceTree = "<group>"; };
+		C0DE00000000000000000002 /* SessionMetricsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionMetricsStore.swift; sourceTree = "<group>"; };
+		C0DE00000000000000000003 /* DictationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationSettingsView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6010203040506 /* ClipboardItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardItem.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6010203040507 /* ClipboardStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardStore.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6010203040508 /* ClipboardObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardObserver.swift; sourceTree = "<group>"; };
@@ -60,7 +88,6 @@
 		0DEB9D511A0072BA0F762A78 /* PipelineController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PipelineController.swift; sourceTree = "<group>"; };
 		22A6147F3235591061E702C5 /* LLMRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LLMRouter.swift; sourceTree = "<group>"; };
 		28E224505818686A6DED2E24 /* inVoice.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = inVoice.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		2D57F00751A65B115B24C5D4 /* TextStabilizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextStabilizer.swift; sourceTree = "<group>"; };
 		3161165938F653DCDE60F238 /* FnSessionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FnSessionController.swift; sourceTree = "<group>"; };
 		362C14BC8CA14CC117DBD29F /* HotKeyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotKeyService.swift; sourceTree = "<group>"; };
 		42533B4B80598A0615B7C95E /* CodexClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexClient.swift; sourceTree = "<group>"; };
@@ -84,15 +111,25 @@
 		E80E9B37C69260A267888469 /* FnKeyMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FnKeyMonitor.swift; sourceTree = "<group>"; };
 		F9B9E3E1C5F9123456789ABC /* SidecarLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidecarLauncher.swift; sourceTree = "<group>"; };
 		FA12BC34D5E6F708192A3B4B /* SelectionCaptureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionCaptureService.swift; sourceTree = "<group>"; };
+		C92500000000000000000001 /* ProductWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductWorkspace.swift; sourceTree = "<group>"; };
+		C92500000000000000000002 /* ProductStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductStatus.swift; sourceTree = "<group>"; };
+		C92500000000000000000003 /* ProductExperience.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductExperience.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
 		AC1000000000000000000001 /* VoiceOpsCore */ = {
 			isa = PBXGroup;
 			children = (
+				C92500000000000000000003 /* ProductExperience.swift */,
 				AA1000000000000000000001 /* FnSessionStateMachine.swift */,
 				AA1000000000000000000002 /* PasteboardTransaction.swift */,
 				AA1000000000000000000003 /* PasteShortcutPlan.swift */,
+				AA1000000000000000000004 /* TranslationPromptDefaults.swift */,
+				AA1000000000000000000005 /* MarkdownDocumentParser.swift */,
+				AA1000000000000000000006 /* DictationPolicy.swift */,
+				AA1000000000000000000007 /* SessionMetricV1.swift */,
+				AA1000000000000000000008 /* VoiceInputProvider.swift */,
+				AA1000000000000000000011 /* DeviceSnapshot.swift */,
 			);
 			path = VoiceOpsCore;
 			sourceTree = "<group>";
@@ -123,6 +160,7 @@
 		390DC23974EF5C6E088180AE /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				C92500000000000000000002 /* ProductStatus.swift */,
 				93E07980A21D00AAD3F21087 /* ASRClient.swift */,
 				86E92C442DB27102F499F7E6 /* AudioCaptureService.swift */,
 				42533B4B80598A0615B7C95E /* CodexClient.swift */,
@@ -137,9 +175,28 @@
 				AEBC051C45D226CE70A63109 /* Permissions.swift */,
 				FA12BC34D5E6F708192A3B4B /* SelectionCaptureService.swift */,
 				F9B9E3E1C5F9123456789ABC /* SidecarLauncher.swift */,
-				2D57F00751A65B115B24C5D4 /* TextStabilizer.swift */,
+				C0DE00000000000000000001 /* StreamingASRClient.swift */,
+				C0DE00000000000000000002 /* SessionMetricsStore.swift */,
+				AA1000000000000000000009 /* WirelessVoiceProvider.swift */,
+				AA1000000000000000000010 /* WirelessProvisioningService.swift */,
 			);
 			path = Services;
+			sourceTree = "<group>";
+		};
+		AC1000000000000000000002 /* DeviceManager */ = {
+			isa = PBXGroup;
+			children = (
+				AA1000000000000000000012 /* DeviceManager.swift */,
+			);
+			path = DeviceManager;
+			sourceTree = "<group>";
+		};
+		AC1000000000000000000003 /* Devices */ = {
+			isa = PBXGroup;
+			children = (
+				AA1000000000000000000013 /* DeviceCenterView.swift */,
+			);
+			path = Devices;
 			sourceTree = "<group>";
 		};
 		5A1A9BD96E05A350C74242A3 = {
@@ -154,9 +211,13 @@
 		697837329334FEE89260229F /* VoiceOps */ = {
 			isa = PBXGroup;
 			children = (
+				C92500000000000000000001 /* ProductWorkspace.swift */,
 				B970B93884207D30F57EA30E /* AppMain.swift */,
 				8B265BFC1D9E2942C4B41157 /* Assets.xcassets */,
 				7B6E9D3A5A0E4C9A1F2D3E4F /* PromptSettingsView.swift */,
+				C0DE00000000000000000003 /* DictationSettingsView.swift */,
+				AC1000000000000000000003 /* Devices */,
+				AC1000000000000000000002 /* DeviceManager */,
 				C1B2C3D4E5F6010203040506 /* Clipboard */,
 				95471A0FBE9BA112F119067F /* Info.plist */,
 				B4D9711AFF7F8DB6192BC475 /* Models */,
@@ -260,9 +321,22 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C92510000000000000000003 /* ProductExperience.swift in Sources */,
+				C92510000000000000000002 /* ProductStatus.swift in Sources */,
+				C92510000000000000000001 /* ProductWorkspace.swift in Sources */,
 				AB1000000000000000000001 /* FnSessionStateMachine.swift in Sources */,
 				AB1000000000000000000002 /* PasteboardTransaction.swift in Sources */,
 				AB1000000000000000000003 /* PasteShortcutPlan.swift in Sources */,
+				AB1000000000000000000004 /* TranslationPromptDefaults.swift in Sources */,
+				AB1000000000000000000005 /* MarkdownDocumentParser.swift in Sources */,
+				AB1000000000000000000006 /* DictationPolicy.swift in Sources */,
+				AB1000000000000000000007 /* SessionMetricV1.swift in Sources */,
+				AB1000000000000000000008 /* VoiceInputProvider.swift in Sources */,
+				AB1000000000000000000009 /* WirelessVoiceProvider.swift in Sources */,
+				AB1000000000000000000010 /* WirelessProvisioningService.swift in Sources */,
+				AB1000000000000000000011 /* DeviceSnapshot.swift in Sources */,
+				AB1000000000000000000012 /* DeviceManager.swift in Sources */,
+				AB1000000000000000000013 /* DeviceCenterView.swift in Sources */,
 				25F70221A7BF9CB7E37CA200 /* ASRClient.swift in Sources */,
 				BA4E2F22B05DD2EC0DBBA13F /* AppMain.swift in Sources */,
 				D3440F588CEFA153F4AA21E8 /* AudioCaptureService.swift in Sources */,
@@ -294,7 +368,9 @@
 				F1261E36233BF186D5A8FC9A /* PreviewView.swift in Sources */,
 				FA12BC34D5E6F708192A3B4C /* SelectionCaptureService.swift in Sources */,
 				F9B9E3E1C5F9123456789ABD /* SidecarLauncher.swift in Sources */,
-				C41F4B9AA5E044CF2A275BC0 /* TextStabilizer.swift in Sources */,
+				C0DE10000000000000000001 /* StreamingASRClient.swift in Sources */,
+				C0DE10000000000000000002 /* SessionMetricsStore.swift in Sources */,
+				C0DE10000000000000000003 /* DictationSettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -335,7 +411,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -353,7 +429,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -420,7 +496,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -432,7 +508,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

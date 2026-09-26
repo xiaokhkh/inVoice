@@ -258,7 +258,7 @@ Run the read-only doctor whenever installation or recognition is not working:
 | Text is recognized but not inserted | Enable Accessibility and keep the original target app in front; otherwise recover it from the clipboard |
 | Board audio is not selected | Confirm the USB Audio device is named `MLX Voice Mic`; a new session selects it automatically |
 | A model or environment is missing | Run `./scripts/install.sh` again |
-| Ollama is unavailable | Open Ollama, then run `ollama pull qwen2.5-coder:7b-instruct-q5_1` |
+| Ollama is unavailable | Open Ollama, then run `ollama pull qwen3.6:35b-a3b-coding` |
 
 Runtime logs are stored in `~/Library/Logs/VoiceOps/`.
 
@@ -280,7 +280,7 @@ Runtime logs are stored in `~/Library/Logs/VoiceOps/`.
 | --- | --- | --- |
 | `VOICEOPS_INSTALL_DIR` | `~/Applications` | Per-user app installation directory |
 | `VOICEOPS_SETUP_PYTHON` | `python3` | Python used to create sidecar environments |
-| `VOICEOPS_OLLAMA_MODEL` | `qwen2.5-coder:7b-instruct-q5_1` | Ollama model prepared by the installer |
+| `VOICEOPS_OLLAMA_MODEL` | `qwen3.6:35b-a3b-coding` | Ollama model prepared by the installer |
 | `ASR_MODEL_ID` | `mlx-community/GLM-ASR-Nano-2512-8bit` | Final MLX ASR model |
 | `FAST_ASR_MODEL_DIR` | `models/zipformer` | Streaming model directory |
 | `FAST_ASR_SAMPLE_RATE` | `16000` | Streaming PCM sample rate |
@@ -294,7 +294,7 @@ Runtime logs are stored in `~/Library/Logs/VoiceOps/`.
 | --- | --- | --- |
 | Streaming ASR | sherpa-onnx bilingual Zipformer | `models/zipformer/` |
 | Final ASR | `mlx-community/GLM-ASR-Nano-2512-8bit` | Hugging Face cache |
-| Text processing | `qwen2.5-coder:7b-instruct-q5_1` | Ollama model store |
+| Text processing | `qwen3.6:35b-a3b-coding` | Ollama model store |
 | Clipboard history | Up to 200 recent items | `~/Library/Application Support/mlx-voiceops/` |
 | Runtime logs | Sidecar stdout and stderr | `~/Library/Logs/VoiceOps/` |
 
