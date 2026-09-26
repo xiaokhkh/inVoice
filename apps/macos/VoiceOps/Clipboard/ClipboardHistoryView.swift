@@ -59,6 +59,9 @@ struct ClipboardHistoryView: View {
                                 onDelete: { viewModel.deleteItem(item) }, onHoverImage: onHoverImage
                             ).id(item.id)
                         }
+                        if viewModel.hasMore {
+                            ClipboardLoadMoreView(model: viewModel)
+                        }
                     }
                 }
                 .onChange(of: viewModel.selectedItem()?.id) { id in
@@ -67,7 +70,7 @@ struct ClipboardHistoryView: View {
             }
             Divider().opacity(0.5)
             HStack(spacing: 8) {
-                Text(viewModel.message ?? "\(viewModel.items.count) 条 · ↑↓ 选择 · ⌘C 复制 · ↩ 粘贴 · Esc 关闭")
+                Text(viewModel.message ?? viewModel.counts.warning ?? "\(viewModel.resultsSummary) · ↑↓ 选择 · ⌘C 复制 · ↩ 粘贴 · Esc 关闭")
                     .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if viewModel.counts.undoable > 0 {
@@ -102,5 +105,21 @@ struct VisualEffectView: NSViewRepresentable {
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
         nsView.material = material
         nsView.blendingMode = blendingMode
+    }
+}
+
+struct ClipboardLoadMoreView: View {
+    @ObservedObject var model: ClipboardHistoryViewModel
+
+    var body: some View {
+        HStack {
+            Spacer()
+            if model.isLoadingMore { ProgressView().controlSize(.small) }
+            Button(model.isLoadingMore ? "正在载入…" : "载入更多记录") { model.loadMore() }
+                .buttonStyle(.link).disabled(model.isLoadingMore || model.isSearching)
+            Spacer()
+        }
+        .padding(.vertical, 10)
+        .onAppear { model.loadMore() }
     }
 }

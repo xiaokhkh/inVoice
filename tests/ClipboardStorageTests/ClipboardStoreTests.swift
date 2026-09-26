@@ -62,14 +62,14 @@ final class ClipboardStoreTests: XCTestCase {
         XCTAssertEqual(store.getRecentItems().first?.id, first.id)
     }
 
-    func testUnpinningOldClipKeepsItAvailableAtRetentionLimit() throws {
+    func testUnpinningOldClipKeepsItAvailableBeyondOldCountLimit() throws {
         record("old favorite")
         let favorite = try XCTUnwrap(store.getRecentItems().first)
         store.setPinned(true, for: favorite.id)
         for n in 0..<200 { record("recent \(n)") }
         store.setPinned(false, for: favorite.id)
         XCTAssertEqual(store.getRecentItems().first?.id, favorite.id)
-        XCTAssertEqual(store.counts().total, 200)
+        XCTAssertEqual(store.counts().total, 201)
     }
 
     func testVoiceDuplicateKeepsCurrentSessionAndStaysInVoiceFilter() throws {
@@ -153,20 +153,20 @@ final class ClipboardStoreTests: XCTestCase {
         XCTAssertEqual(store.counts().total, 2)
     }
 
-    func testRetentionKeeps200OrdinaryPlusPinnedAndUndoableImage() throws {
+    func testNoCountCapKeepsOrdinaryPinnedAndUndoableImage() throws {
         record("pinned")
         let pinned = try XCTUnwrap(store.getRecentItems().first)
         store.setPinned(true, for: pinned.id)
         store.recordSystemImage(Data([9, 8, 7]), appBundleID: nil)
         let image = try XCTUnwrap(store.getRecentItems(filter: .init(type: .image)).first)
         XCTAssertEqual(store.deleteItems(ids: [image.id]), 1)
-        for n in 0..<215 { record("ordinary \(n)") }
-        XCTAssertEqual(store.counts().total, 201)
+        for n in 0..<515 { record("ordinary \(n)") }
+        XCTAssertEqual(store.counts().total, 516)
         XCTAssertEqual(store.counts().pinned, 1)
         XCTAssertEqual(store.counts().undoable, 1)
         XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(image.contentImagePath)))
         XCTAssertEqual(store.undoDeletion(), 1)
-        XCTAssertEqual(store.counts().total, 201)
+        XCTAssertEqual(store.counts().total, 517)
         XCTAssertEqual(store.getRecentItems(filter: .init(type: .image)).first?.id, image.id)
     }
 
@@ -174,7 +174,7 @@ final class ClipboardStoreTests: XCTestCase {
         record("legacy")
         _ = store.counts()
         store = nil
-        try sql("DROP INDEX idx_clipboard_recent_active; DROP INDEX idx_clipboard_identity_active; DROP INDEX idx_clipboard_lru_active;")
+        try sql("DROP INDEX idx_clipboard_recent_active; DROP INDEX idx_clipboard_identity_active; DROP INDEX idx_clipboard_lru_active; DROP INDEX idx_clipboard_storage; DROP INDEX idx_clipboard_page;")
         try sql("ALTER TABLE clipboard_items DROP COLUMN deleted_at;")
         store = ClipboardStore(directory: directory)
         let item = try XCTUnwrap(store.getRecentItems().first)
@@ -184,9 +184,10 @@ final class ClipboardStoreTests: XCTestCase {
     }
 
     func testSuccessfulUseProtectsOldClipWithoutReorderingHistory() throws {
+        store = ClipboardStore(directory: directory, capacityBytes: 800)
         record("frequently reused")
         let original = try XCTUnwrap(store.getRecentItems().first)
-        for n in 0..<199 { record("newer \(n)") }
+        for n in 0..<2 { record("newer \(n)") }
         let before = store.getRecentItems().map(\.id)
         store.markUsed(original.id)
         XCTAssertEqual(store.getRecentItems().map(\.id), before)
@@ -195,22 +196,24 @@ final class ClipboardStoreTests: XCTestCase {
         XCTAssertGreaterThan(used.lastUsedAt, original.lastUsedAt)
         record("overflow")
         let remaining = store.getRecentItems()
-        XCTAssertEqual(remaining.count, 200)
+        XCTAssertEqual(remaining.count, 3)
+        XCTAssertLessThanOrEqual(store.counts().ordinaryBytes, 800)
         XCTAssertTrue(remaining.contains { $0.id == original.id })
         XCTAssertFalse(remaining.contains { $0.contentText == "newer 0" })
     }
 
     func testPreviewDoesNotExtendRetentionAndUsageSurvivesRelaunch() throws {
+        store = ClipboardStore(directory: directory, capacityBytes: 800)
         record("preview only")
         let preview = try XCTUnwrap(store.getRecentItems().first)
         record("used")
         let used = try XCTUnwrap(store.getRecentItems().first)
-        for n in 0..<198 { record("later \(n)") }
+        record("later")
         _ = store.getRecentItems(query: "preview only")
         store.markUsed(used.id)
         let usage = try XCTUnwrap(store.getRecentItems().first { $0.id == used.id }).lastUsedAt
         store = nil
-        store = ClipboardStore(directory: directory)
+        store = ClipboardStore(directory: directory, capacityBytes: 800)
         XCTAssertEqual(store.getRecentItems().first { $0.id == used.id }?.lastUsedAt, usage)
         record("new capture")
         XCTAssertFalse(store.getRecentItems().contains { $0.id == preview.id })
@@ -236,4 +239,120 @@ final class ClipboardStoreTests: XCTestCase {
         let undone = try XCTUnwrap(store.getRecentItems().first { $0.id == deleted.id })
         XCTAssertGreaterThan(undone.lastUsedAt, deleted.lastUsedAt)
     }
+    func testCapacityEvictsImageByLRUWhileProtectingPinsUndoAndOriginals() throws {
+        store = ClipboardStore(directory: directory, capacityBytes: 800)
+        store.recordSystemImage(Data(repeating: 1, count: 100), appBundleID: nil)
+        let pinned = try XCTUnwrap(store.getRecentItems().first)
+        store.setPinned(true, for: pinned.id)
+        store.recordSystemImage(Data(repeating: 2, count: 100), appBundleID: nil)
+        let undo = try XCTUnwrap(store.getRecentItems().last)
+        XCTAssertEqual(store.deleteItems(ids: [undo.id]), 1)
+        let original = directory.appendingPathComponent("original.png")
+        try Data([42]).write(to: original)
+        store.recordSystemImage(Data(repeating: 3, count: 100), appBundleID: nil, originalPath: original.path)
+        let victim = try XCTUnwrap(store.getRecentItems().last)
+        store.recordSystemImage(Data(repeating: 4, count: 100), appBundleID: nil)
+        store.recordSystemImage(Data(repeating: 5, count: 100), appBundleID: nil)
+        let counts = store.counts()
+        XCTAssertEqual(counts.total, 3)
+        XCTAssertEqual(counts.ordinaryBytes, 712)
+        XCTAssertEqual(counts.pinnedBytes, 356)
+        XCTAssertEqual(counts.undoBytes, 356)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(victim.contentImagePath)))
+        for item in [pinned, undo] {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(item.contentImagePath)))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: original.path))
+    }
+
+    func testOversizeCapturePreservesExistingHistoryAndDoesNotWriteImage() throws {
+        store = ClipboardStore(directory: directory, capacityBytes: 800)
+        record("keep")
+        let before = store.getRecentItems().map(\.id)
+        store.recordSystemImage(Data(repeating: 9, count: 801), appBundleID: nil)
+        XCTAssertEqual(store.getRecentItems().map(\.id), before)
+        XCTAssertNotNil(store.counts().warning)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directory.appendingPathComponent("clipboard_images").path).isEmpty)
+        record(String(repeating: "中", count: 300))
+        XCTAssertEqual(store.getRecentItems().map(\.id), before)
+        record("new valid capture")
+        XCTAssertEqual(store.counts().total, 2)
+        XCTAssertNil(store.counts().warning)
+    }
+
+    func testVoiceDuplicateAccountsForUTF8AndUpdatedContext() throws {
+        store = ClipboardStore(directory: directory, capacityBytes: 800)
+        let session = UUID()
+        store.recordVoiceOpsText(sessionID: session, text: "你好", selectedText: "文", voiceIntent: nil, llmUsed: nil, appBundleID: nil)
+        let original = try XCTUnwrap(store.getRecentItems().first)
+        XCTAssertEqual(store.counts().ordinaryBytes, 265)
+        record("other")
+        // Updated context makes this duplicate cost 662 bytes, so the other clip must be evicted.
+        store.recordVoiceOpsText(sessionID: session, text: "你好", selectedText: String(repeating: "x", count: 400), voiceIntent: nil, llmUsed: nil, appBundleID: nil)
+        XCTAssertEqual(store.counts().ordinaryBytes, 662)
+        XCTAssertEqual(store.getRecentItems().map(\.id), [original.id])
+        // A rejected oversized duplicate must leave the earlier context intact.
+        store.recordVoiceOpsText(sessionID: session, text: "你好", selectedText: String(repeating: "x", count: 800), voiceIntent: nil, llmUsed: nil, appBundleID: nil)
+        XCTAssertEqual(store.counts().ordinaryBytes, 662)
+        XCTAssertEqual(store.getRecentItems().first?.selectedText?.count, 400)
+        XCTAssertNotNil(store.counts().warning)
+    }
+
+    func testCapacityDeletionRollbackKeepsEveryImage() throws {
+        store = ClipboardStore(directory: directory, capacityBytes: 800)
+        for byte in UInt8(1)...2 { store.recordSystemImage(Data(repeating: byte, count: 100), appBundleID: nil) }
+        let before = store.getRecentItems()
+        // New image needs both older clips removed. Failure on the second victim rolls back both.
+        try sql("CREATE TRIGGER fail_eviction BEFORE DELETE ON clipboard_items WHEN OLD.id = '\(before[0].id.uuidString)' BEGIN SELECT RAISE(ABORT, 'test'); END;")
+        store.recordSystemImage(Data(repeating: 3, count: 500), appBundleID: nil)
+        XCTAssertEqual(store.counts().total, 3)
+        for item in before {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(item.contentImagePath)))
+        }
+        try sql("DROP TRIGGER fail_eviction;")
+        record("retry")
+        XCTAssertLessThanOrEqual(store.counts().ordinaryBytes, 800)
+    }
+
+    func testStorageMigrationRecountsWithoutEvictingOrChangingRecords() throws {
+        record("中文")
+        let original = try XCTUnwrap(store.getRecentItems().first)
+        store.setPinned(true, for: original.id)
+        store.recordSystemImage(Data(repeating: 1, count: 100), appBundleID: nil)
+        let image = try XCTUnwrap(store.getRecentItems().last)
+        XCTAssertEqual(store.deleteItems(ids: [image.id]), 1)
+        record("retained on upgrade")
+        let before = store.getRecentItems()
+        store = nil
+        try sql("DROP INDEX idx_clipboard_storage; ALTER TABLE clipboard_items DROP COLUMN storage_bytes;")
+        // A lower new budget must not delete anything merely by opening the database.
+        store = ClipboardStore(directory: directory, capacityBytes: 1)
+        XCTAssertEqual(store.getRecentItems().map(\.id), before.map(\.id))
+        XCTAssertEqual(store.getRecentItems().map(\.timestamp), before.map(\.timestamp))
+        XCTAssertEqual(store.getRecentItems().map(\.contentHash), before.map(\.contentHash))
+        XCTAssertEqual(store.counts().pinnedBytes, 262)
+        XCTAssertEqual(store.counts().undoBytes, 356)
+        XCTAssertEqual(store.counts().ordinaryBytes, 275)
+        store.setPinned(false, for: original.id)
+        XCTAssertEqual(store.counts().pinned, 1)
+        XCTAssertEqual(store.getRecentItems().map(\.id), before.map(\.id))
+        XCTAssertNotNil(store.counts().warning)
+    }
+
+    func testPaginationFiltersEntireHistoryAndHasStableBoundaries() throws {
+        for n in 0..<350 { record("page \(n)") }
+        let all = store.getRecentItems()
+        store.setPinned(true, for: all.last!.id)
+        let expected = store.getRecentItems().map(\.id)
+        var actual: [UUID] = []
+        for offset in stride(from: 0, to: 400, by: 100) {
+            actual += store.getRecentItems(limit: 100, offset: offset).map(\.id)
+        }
+        XCTAssertEqual(actual, expected)
+        XCTAssertEqual(Set(actual).count, 350)
+        XCTAssertEqual(store.getRecentItems(limit: 1, query: "page 1", offset: 10).first?.id,
+                       store.getRecentItems(query: "page 1")[10].id)
+        XCTAssertEqual(store.getRecentItems(limit: 100, filter: .init(pinnedOnly: true)).count, 1)
+    }
+
 }

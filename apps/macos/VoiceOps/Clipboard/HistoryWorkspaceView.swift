@@ -105,6 +105,7 @@ struct HistoryWorkspaceView: View {
                         Button("删除记录", role: .destructive) { model.deleteItem(item) }
                     }
                 }
+                if model.hasMore { ClipboardLoadMoreView(model: model) }
             }
             .listStyle(.sidebar)
             .onDeleteCommand { model.deleteSelected() }
@@ -191,7 +192,7 @@ struct HistoryWorkspaceView: View {
     private var footer: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
-                Text(model.message ?? "\(model.items.count) 条记录 · 已固定 \(model.counts.pinned) 条")
+                Text(model.message ?? model.counts.warning ?? "\(model.resultsSummary) · 已固定 \(model.counts.pinned) 条")
                     .font(.system(size: 11)).foregroundStyle(model.message == nil ? Color.secondary : Color.accentColor)
                     .lineLimit(2)
                 Spacer(minLength: 4)
@@ -200,8 +201,8 @@ struct HistoryWorkspaceView: View {
                         .controlSize(.small).disabled(model.isBusy || model.isSearching).help("可撤销上一次删除或清理，直到下一次删除")
                 }
             }.frame(minHeight: 24)
-            Label("仅保存在本机", systemImage: "lock")
-                .help("保留最近使用的 200 条记录，固定内容额外保留。成功复制或粘贴会延长保留时间，列表仍按收集时间排列。")
+            Label("仅在本机 · \(model.storageSummary) · 不限条数", systemImage: "lock")
+                .help(model.storageHelp)
                 .font(.system(size: 10)).foregroundStyle(.secondary)
         }
     }

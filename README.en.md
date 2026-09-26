@@ -91,7 +91,8 @@ Open **Clipboard (剪贴板)** in the main window for full text and image previe
 `Command + Fn` to search and paste into the app you were using.
 
 - Filter by all clips, pinned clips, text, images, or voice input. Search text and image filenames, including Chinese and literal punctuation.
-- Pin frequently used clips. The 200 most recently used ordinary clips are kept, with pinned clips retained separately. Successful copy/paste extends retention without changing the visible capture-time order; previews and failed operations do not count as use.
+- Pin frequently used clips. There is no record-count cap. Ordinary history has a default 1 GiB estimated-content budget; the least recently used clips are removed only when that budget is exceeded. Pinned clips and the last undo batch are retained separately. Successful copy/paste extends retention without changing the visible capture-time order; previews and failed operations do not count as use.
+- History loads in pages of 100; search always covers all stored clips. The footer shows loaded/total records and estimated ordinary usage. A single clip larger than the budget is skipped without clearing existing history or changing the system clipboard.
 - Delete individual clips or use **More (更多) → Clear unpinned**. The last deletion/cleanup batch can be undone, including after relaunch, until another deletion replaces it.
 - The quick panel supports native text editing and input methods: `↑/↓` selects, `Return` pastes, `Esc` closes, and `Command + Delete` deletes. `Command + C` copies selected search text when there is a selection, otherwise it copies the selected clip.
 - In the main window, `Command + F` focuses search and `Shift + Command + C` copies the full selected clip. Pause capture in the Clipboard page's **More** menu; a visible banner lets you resume it.
@@ -116,6 +117,9 @@ and history-image reads run in the background. Capture permits one in-flight sna
 after it finishes, the latest clipboard change is checked immediately. Hidden quick panels
 stop querying the database until reopened. Async image copy/paste respects newer clipboard
 contents and cancellation. LRU metadata migrates existing history without changing dates or pins.
+
+The 0.3.2 update removes the 200-clip cap and adds capacity-based LRU and paginated loading.
+The estimate includes UTF-8 text, selected context, stored image bytes, and a 256-byte allowance per record; it is not a hard limit on database file size. Upgrade migration preserves existing clips without evicting them at startup.
 
 See [benchmarks and the Rust assessment](docs/CLIPBOARD_PERFORMANCE_2026-09-26.md).
 
@@ -330,7 +334,7 @@ Runtime logs are stored in `~/Library/Logs/VoiceOps/`.
 | Streaming ASR | sherpa-onnx bilingual Zipformer | `models/zipformer/` |
 | Final ASR | `mlx-community/GLM-ASR-Nano-2512-8bit` | Hugging Face cache |
 | Text processing | `qwen3.6:35b-a3b-coding` | Ollama model store |
-| Clipboard history | 200 recently used ordinary clips, plus pinned clips and the last undo batch | `~/Library/Application Support/mlx-voiceops/` |
+| Clipboard history | No count cap; 1 GiB ordinary content with LRU eviction, plus pinned clips and the last undo batch | `~/Library/Application Support/mlx-voiceops/` |
 | Runtime logs | Sidecar stdout and stderr | `~/Library/Logs/VoiceOps/` |
 
 After setup, transcription and LLM processing use loopback-only local services.

@@ -37,6 +37,30 @@ final class ClipboardHistoryViewModel: ObservableObject {
     @Published private(set) var isSearching = false
     @Published private(set) var isTransferring = false
 
+    @Published private(set) var hasMore = false
+    @Published private(set) var isLoadingMore = false
+    private static let pageSize = 100
+    private var isRefreshing = false
+
+    var resultsSummary: String {
+        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && category == .all {
+            return "共 \(counts.total) 条" + (hasMore ? " · 已加载 \(items.count) 条" : "")
+        }
+        return hasMore ? "已加载 \(items.count) 条匹配记录" : "\(items.count) 条匹配记录"
+    }
+
+    var storageSummary: String {
+        "普通历史 \(Self.formatBytes(counts.ordinaryBytes)) / \(Self.formatBytes(counts.capacityBytes))"
+    }
+
+    var storageHelp: String {
+        "不限条数。普通历史按估算内容大小使用空间，满后淘汰最久未使用的记录。成功复制或粘贴会延长保留时间，预览不计入使用。固定内容（\(Self.formatBytes(counts.pinnedBytes))）与可撤销内容（\(Self.formatBytes(counts.undoBytes))）另计；实际磁盘占用还包含数据库开销。"
+    }
+
+    private static func formatBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .binary)
+    }
+
     private let store: ClipboardStore
     private let injector: FocusInjector
     private let pasteboard: NSPasteboard
@@ -67,7 +91,17 @@ final class ClipboardHistoryViewModel: ObservableObject {
         observer = NotificationCenter.default.addObserver(
             forName: ClipboardStore.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.refresh(resetSelection: false) }
+            Task { @MainActor in
+                guard let self, self.isActive else { return }
+                // Coalesce bursts of captures; invalidate any page already in flight.
+                self.refreshGeneration &+= 1
+                self.isRefreshing = true
+                self.isLoadingMore = false
+                self.searchWorkItem?.cancel()
+                let work = DispatchWorkItem { [weak self] in self?.refresh(resetSelection: false) }
+                self.searchWorkItem = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.03, execute: work)
+            }
         }
         refresh(resetSelection: true)
     }
@@ -86,12 +120,19 @@ final class ClipboardHistoryViewModel: ObservableObject {
             searchWorkItem?.cancel()
             refreshGeneration &+= 1
             isSearching = false
+            isLoadingMore = false
+            isRefreshing = false
         }
     }
 
     func refresh(resetSelection: Bool) {
         guard isActive else { return }
+        searchWorkItem?.cancel()
         refreshGeneration &+= 1
+        isLoadingMore = false
+        isRefreshing = true
+        let resetSelection = resetSelection || isSearching
+        let limit = resetSelection ? Self.pageSize : max(Self.pageSize, items.count)
         let generation = refreshGeneration
         let selectionID = selectedItem()?.id
         let previousIndex = selectedIndex
@@ -99,14 +140,43 @@ final class ClipboardHistoryViewModel: ObservableObject {
         let filter = category.filter
         let store = self.store
         DispatchQueue.global(qos: .userInitiated).async {
-            let items = store.getRecentItems(filter: filter, query: query)
+            let page = store.getRecentItems(limit: limit + 1, filter: filter, query: query)
+            let items = Array(page.prefix(limit))
             let counts = store.counts()
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.refreshGeneration == generation else { return }
                 self.items = items
+                self.hasMore = page.count > limit
+                self.isRefreshing = false
                 self.isSearching = false
                 self.counts = counts
                 self.selectedIndex = resetSelection ? 0 : (items.firstIndex { $0.id == selectionID } ?? min(previousIndex, max(0, items.count - 1)))
+            }
+        }
+    }
+
+    func loadMore(selectNext: Bool = false) {
+        guard isActive, hasMore, !isLoadingMore, !isSearching, !isRefreshing else { return }
+        isLoadingMore = true
+        let generation = refreshGeneration
+        let offset = items.count
+        let pageSize = Self.pageSize
+        let selectionID = selectedItem()?.id
+        let query = self.query
+        let filter = category.filter
+        let store = self.store
+        DispatchQueue.global(qos: .userInitiated).async {
+            let page = store.getRecentItems(limit: pageSize + 1, filter: filter, query: query, offset: offset)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.refreshGeneration == generation else { return }
+                self.isLoadingMore = false
+                // A store notification will refresh moved/deleted records. Never append duplicate IDs.
+                let existingIDs = Set(self.items.map(\.id))
+                self.items.append(contentsOf: page.prefix(pageSize).filter { !existingIDs.contains($0.id) })
+                self.hasMore = page.count > pageSize
+                if selectNext, self.selectedItem()?.id == selectionID, self.items.count > offset {
+                    self.selectedIndex = offset
+                }
             }
         }
     }
@@ -116,6 +186,7 @@ final class ClipboardHistoryViewModel: ObservableObject {
         query = value
         guard isActive else { return }
         isSearching = true
+        isLoadingMore = false
         refreshGeneration &+= 1
         searchWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.refresh(resetSelection: true) }
@@ -136,7 +207,11 @@ final class ClipboardHistoryViewModel: ObservableObject {
 
     func moveSelection(delta: Int) {
         guard !items.isEmpty else { return }
-        selectedIndex = min(max(selectedIndex + delta, 0), items.count - 1)
+        if delta > 0, selectedIndex == items.count - 1, hasMore {
+            loadMore(selectNext: true)
+        } else {
+            selectedIndex = min(max(selectedIndex + delta, 0), items.count - 1)
+        }
     }
 
     func selectIndex(_ index: Int) {

@@ -9,6 +9,11 @@ case "${1:-current}" in
       tests/performance/clipboard_benchmark.swift \
       apps/macos/VoiceOps/Clipboard/{ClipboardStore,ClipboardItem,ClipboardImageProcessor}.swift
     ;;
+  history)
+    swiftc -parse-as-library -O -o "$qa_bin_dir/benchmark" \
+      tests/performance/clipboard_capacity_benchmark.swift \
+      apps/macos/VoiceOps/Clipboard/{ClipboardStore,ClipboardItem}.swift
+    ;;
   baseline)
     # Last shipped 0.3.0 implementation. Git reads only these source files.
     qa_ref=1130a0981503fd819fdf1b888cb353cf8a27fc43
@@ -17,6 +22,6 @@ case "${1:-current}" in
     swiftc -parse-as-library -O -o "$qa_bin_dir/benchmark" \
       tests/performance/clipboard_benchmark.swift "$qa_bin_dir/ClipboardStore.swift" "$qa_bin_dir/ClipboardItem.swift"
     ;;
-  *) printf 'Usage: %s [current|baseline]\n' "$0" >&2; exit 2 ;;
+  *) printf 'Usage: %s [current|baseline|history]\n' "$0" >&2; exit 2 ;;
 esac
 "$qa_bin_dir/benchmark"

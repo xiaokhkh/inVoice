@@ -96,6 +96,39 @@ struct ClipboardExperienceSmoke {
         try check(slow.items.count == oldCount, "hidden panel stays dormant")
         slow.setActive(true)
         try await waitFor { slow.items.count == oldCount + 1 }
-        print("PASS: search, copy, delete/undo, missing images, async clipboard race, cancellation, LRU success/failure, copy-only fallback, hidden-panel refresh")
+        model.setActive(false)
+        slow.setActive(false)
+        for n in 0..<260 { store.recordSystemText("pagination \(n)", appBundleID: nil) }
+        _ = store.counts()
+        slow.setActive(true)
+        try await waitFor { slow.items.count == 100 && slow.hasMore }
+        // Allow the coalesced store notification to settle, then exercise page boundaries.
+        try await Task.sleep(nanoseconds: 100_000_000)
+        slow.loadMore()
+        slow.loadMore()
+        try await waitFor { slow.items.count == 200 && !slow.isLoadingMore }
+        try check(Set(slow.items.map(\.id)).count == 200, "duplicate load requests do not duplicate rows")
+        slow.selectIndex(199)
+        slow.moveSelection(delta: 1)
+        try await waitFor { slow.items.count == 264 && !slow.hasMore }
+        try check(slow.selectedIndex == 200, "keyboard navigation crosses page boundaries")
+        try check(slow.items.map(\.id) == store.getRecentItems().map(\.id), "all pages preserve database order")
+        slow.setQuery("alpha")
+        try await waitFor { !slow.isSearching && slow.items.count == 1 }
+        try check(slow.items[0].contentText?.contains("alpha") == true, "search finds old records outside the first page")
+        slow.clearQuery()
+        try await waitFor { !slow.isSearching && slow.items.count == 100 }
+        slow.loadMore()
+        slow.setQuery("pagination 25")
+        try await waitFor { !slow.isSearching && slow.items.count == 11 }
+        try check(slow.items.allSatisfy { $0.contentText?.contains("pagination 25") == true }, "stale page cannot replace a newer query")
+        slow.clearQuery()
+        try await waitFor { !slow.isSearching && slow.items.count == 100 }
+        slow.loadMore()
+        store.recordSystemText("captured during pagination", appBundleID: nil)
+        _ = store.counts()
+        try await waitFor { slow.items.first?.contentText == "captured during pagination" }
+        try check(Set(slow.items.map(\.id)).count == slow.items.count, "live capture and page loading remain consistent")
+        print("PASS: search, copy, delete/undo, missing images, async clipboard race, cancellation, LRU success/failure, copy-only fallback, hidden-panel refresh, pagination, full-history search and stale-page cancellation")
     }
 }

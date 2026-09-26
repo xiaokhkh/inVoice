@@ -51,9 +51,11 @@ final class PreviewDelegate: NSObject, NSApplicationDelegate {
             "QA · 进度 100% · file_name · 路径 \\assets",
             "QA · Please finish the experience improvements by Friday."
         ]
-        for text in texts.dropLast() { store.recordSystemText(text, appBundleID: "com.apple.TextEdit") }
+        // Populate beyond the first page without reading the user's history.
+        texts += (0..<240).map { "QA · 历史记录 \($0) · 可搜索、预览和重新使用" }
+        for text in texts where text != texts[4] { store.recordSystemText(text, appBundleID: "com.apple.TextEdit") }
         if let first = store.getRecentItems(query: "常用回复").first { store.setPinned(true, for: first.id) }
-        store.recordVoiceOpsText(sessionID: UUID(), text: texts.last!, selectedText: nil, voiceIntent: "translateAndPolish", llmUsed: "local", appBundleID: nil)
+        store.recordVoiceOpsText(sessionID: UUID(), text: texts[4], selectedText: nil, voiceIntent: "translateAndPolish", llmUsed: "local", appBundleID: nil)
         let image = NSImage(size: NSSize(width: 1600, height: 1000))
         image.lockFocus()
         NSColor.systemIndigo.setFill()

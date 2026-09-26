@@ -112,7 +112,7 @@ it. The synthetic speech does not read the microphone or modify the clipboard.
 ## Clipboard history (0.2.1)
 
 `swift test` includes isolated SQLite tests for literal search, source/type/pin filters,
-exact whitespace preservation, deduplication, 200-clip retention, image deletion and
+exact whitespace preservation, deduplication, capacity-based retention (since 0.3.2), image deletion and
 undo, cleanup protection, migration, persistence across relaunch, and failed-transaction rollback.
 The pasteboard tests also cover image ownership and cancellation of pending text restoration.
 
@@ -196,3 +196,30 @@ hashing and disk I/O; the benchmark drains each write before taking another samp
 Manual acceptance: open and dismiss the quick panel, copy a large image, copy newer content
 while a history image is loading, and confirm that reopening refreshes history. Migration
 must preserve existing IDs, capture dates, pins, deletion state, and original image files.
+
+## Capacity-based clipboard history (0.3.2)
+
+`swift test` verifies more than 500 ordinary records survive below budget, UTF-8/context/image
+byte accounting, LRU eviction at an injected small budget, pin/undo protection, rejection of
+oversized captures and duplicates, rollback before image-file removal, and migration without
+startup eviction. Oversized pinned records remain pinned if unpinning would immediately erase them.
+Pagination tests check stable boundaries and whole-database filtering before LIMIT/OFFSET.
+
+`./tests/e2e/clipboard_smoke.sh` additionally exercises a 264-record view-model fixture:
+100-record first page, repeated load requests, keyboard navigation across pages, search for an
+old clip, stale-page cancellation after a new query, and live capture during pagination.
+
+Manual acceptance: the workspace footer shows total and loaded records, ordinary usage and
+“no count limit”; its help explains separate pinned/undo storage and estimated disk usage.
+Scroll to load more in both workspace and quick panel. Upgrade must preserve IDs, timestamps,
+pins, deleted states, content hashes and image files. The actual SQLite file may include free
+pages and metadata beyond the content budget.
+
+Reproduce the generated 5,000-record storage benchmark:
+`./tests/performance/clipboard_benchmark.sh history`. It reports first/deep page, common/rare
+search, and capture including the worker and capacity check. See the dated performance report
+for measured results and their scope.
+
+Release 0.3.2 verification: 75 core tests, all three clipboard smoke suites, Release universal
+build and signature passed. Native isolated UI checked 246 records across pages. The installed
+0.3.2 (6) preserves all 202 existing rows and 17 image files; SQLite integrity and doctor passed.
